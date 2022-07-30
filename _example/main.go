@@ -1,0 +1,75 @@
+package main
+
+import (
+	"github.com/bwmarrin/discordgo"
+	"github.com/eolso/eris"
+	"github.com/eolso/eris/plugins"
+	"github.com/rs/zerolog/log"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	token, ok := os.LookupEnv("DISCORD_TOKEN")
+	if !ok {
+		log.Fatal().Msg("env var DISCORD_TOKEN not set")
+	}
+	appId, ok := os.LookupEnv("DISCORD_APP_ID")
+	if !ok {
+		log.Fatal().Msg("env var DISCORD_APP_ID not set")
+	}
+
+	bot, err := eris.NewBot(token, appId)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create discord session")
+	}
+
+	bot.AddPlugin(plugins.Akinator(), "")
+	bot.AddPlugin(plugins.Quip(), "")
+	bot.AddPlugin(plugins.Stats(), "")
+	bot.AddPlugin(plugins.Spotify(), "")
+	bot.AddPlugin(plugins.RPS(bot.Id()))
+
+	var i discordgo.Intent
+	i = discordgo.IntentsGuilds
+	i |= discordgo.IntentGuildIntegrations
+	bot.DiscordSession.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages |
+		discordgo.IntentsGuildVoiceStates | discordgo.IntentMessageContent
+
+	err = bot.Start()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to open discord session")
+	}
+
+	//bot.DiscordSession.ChannelMessageSendComplex("976374934702014464", &discordgo.MessageSend{
+	//	Content: "halo",
+	//	Components: []discordgo.MessageComponent{
+	//		discordgo.ActionsRow{
+	//			Components: []discordgo.MessageComponent{
+	//				discordgo.Button{
+	//					Label:    "Characters",
+	//					Style:    discordgo.PrimaryButton,
+	//					CustomID: "21q_theme_characters",
+	//				},
+	//				discordgo.Button{
+	//					Label:    "Animals",
+	//					Style:    discordgo.PrimaryButton,
+	//					CustomID: "21q_theme_animals",
+	//				},
+	//				discordgo.Button{
+	//					Label:    "Objects",
+	//					Style:    discordgo.PrimaryButton,
+	//					CustomID: "21q_theme_objects",
+	//				},
+	//			},
+	//		},
+	//	},
+	//})
+
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+	<-sc
+
+	bot.DiscordSession.Close()
+}
