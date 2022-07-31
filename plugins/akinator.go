@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-var QuestionLimit = 40
-
 var themeIdMap = map[string]athena.Theme{
 	"21q_theme_characters": athena.CharactersTheme,
 	"21q_theme_animals":    athena.AnimalsTheme,
@@ -30,11 +28,16 @@ type akinator struct {
 	lastInteraction *discordgo.Interaction
 	gameOwnerId     string
 	processing      bool
+	questionLimit   int
+	guessThreshold  float64
 	//handlers   map[string]any
 }
 
 func Akinator() eris.Plugin {
-	return &akinator{}
+	return &akinator{
+		questionLimit:  40,
+		guessThreshold: 90.0,
+	}
 }
 
 func (a *akinator) Name() string {
@@ -187,7 +190,7 @@ func (a *akinator) Handlers() map[string]any {
 				/////
 				_ = a.client.Answer(answerIdMap[i.MessageComponentData().CustomID])
 
-				if a.client.Progress() >= 95.0 || a.client.Step()+1 > QuestionLimit {
+				if a.client.Progress() >= a.guessThreshold || a.client.Step()+1 > a.questionLimit {
 					_ = s.ChannelMessageDelete(interactionResponse.ChannelID, interactionResponse.ID)
 
 					guesses := a.client.ListGuesses().Parameters.Elements
