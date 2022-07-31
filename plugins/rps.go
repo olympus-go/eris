@@ -18,6 +18,7 @@ type rpsGame struct {
 	challengeePrompt    *discordgo.Message
 	challengerSelection string
 	challengeeSelection string
+	challengeChannelId  string
 	startTime           time.Time
 }
 
@@ -110,12 +111,24 @@ func (r rps) Handlers() map[string]any {
 				challengee:          challengee,
 				challengerSelection: "",
 				challengeeSelection: "",
+				challengeChannelId:  "",
 				startTime:           time.Now(),
 			}
 
-			//_, _ = session.ChannelMessageSend(i.ChannelID, fmt.Sprintf("<@%s> challenged <@%s> to rock paper scissors!", challenger, challengedUser))
+			// Set the channelId if the interaction was created in a guild
+			if i.Interaction.GuildID != "" {
+				r.activeGames[gameId].challengeChannelId = i.Interaction.ChannelID
+			}
+
+			log.Debug().
+				Str("user_id", challenger).
+				Str("target_user_id", challengee).
+				Str("channel_id", r.activeGames[gameId].challengeChannelId).
+				Msg("user invoked rock paper scissors")
 
 			if challengee == r.botId {
+				log.Debug().Str("user_id", challenger).Msg("bot accepted the users challenge")
+
 				r.activeGames[gameId].challengeeSelection = r.generateMove()
 				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -127,11 +140,17 @@ func (r rps) Handlers() map[string]any {
 
 				challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
 				if err != nil {
-					log.Error().Err(err).Str("userId", r.activeGames[gameId].challenger).Msg("could not create DM with user")
+					log.Error().Err(err).Str("user_id", r.activeGames[gameId].challenger).Msg("could not create DM with user")
 					return
 				}
 
 				r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
+				if err != nil {
+					log.Error().Err(err).Str("user_id", r.activeGames[gameId].challenger).Msg("could not send DM to user")
+					return
+				}
+				log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+					Msg("prompt sent to user")
 			} else {
 				challengeeUserChannel, err := session.UserChannelCreate(challengee)
 				if err != nil {
@@ -142,7 +161,7 @@ func (r rps) Handlers() map[string]any {
 							Flags:   uint64(discordgo.MessageFlagsEphemeral),
 						},
 					})
-					log.Error().Err(err).Str("userId", challengee).Msg("could not create DM with user")
+					log.Error().Err(err).Str("user_id", challengee).Msg("could not create DM with user")
 					return
 				}
 
@@ -163,6 +182,7 @@ func (r rps) Handlers() map[string]any {
 				if err != nil {
 					log.Error().Err(err).Msg("failed to respond to interaction")
 				}
+				log.Debug().Str("game_id", gameId).Str("user_id", challengee).Msg("challenge sent to user")
 			}
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
@@ -197,6 +217,9 @@ func (r rps) Handlers() map[string]any {
 
 				switch responseSelection {
 				case "accept":
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+						Msg("challenge accepted by user")
+
 					// Generate the prompt for the challengee
 					challengeeUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challengee)
 					if err != nil {
@@ -205,7 +228,11 @@ func (r rps) Handlers() map[string]any {
 					}
 					if r.activeGames[gameId].challengeePrompt, err = session.ChannelMessageSendComplex(challengeeUserChannel.ID, r.generatePrompt(gameId, true)); err != nil {
 						log.Error().Err(err).Str("channelId", challengeeUserChannel.ID).Msg("failed to send message")
+						return
 					}
+
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+						Msg("prompt sent to user")
 
 					// Send the prompt to the challenger
 					challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
@@ -214,10 +241,15 @@ func (r rps) Handlers() map[string]any {
 						return
 					}
 
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+						Msg("prompt sent to user")
+
 					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
 					r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
-
 				case "decline":
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+						Msg("challenge declined by user")
+
 					challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
 					if err != nil {
 						log.Error().Err(err).Str("userId", r.activeGames[gameId].challenger).Msg("could not create DM with user")
@@ -226,6 +258,9 @@ func (r rps) Handlers() map[string]any {
 
 					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
 					_, err = session.ChannelMessageSend(challengerUserChannel.ID, r.generateDecline(r.activeGames[gameId].challengee))
+
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+						Msg("decline notice sent to user")
 
 					delete(r.activeGames, gameId)
 				default:
@@ -287,6 +322,9 @@ func (r rps) Handlers() map[string]any {
 					log.Error().Str("gameId", gameId).Str("userId", userId).Msg("user interacted with button not associated with their game")
 					return
 				}
+				log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+					Str("selection", moveSelection).
+					Msg("user made a selection")
 
 				// Send a successful response to the interaction
 				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -308,18 +346,29 @@ func (r rps) Handlers() map[string]any {
 						winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challengee)
 					}
 
-					// Send results to challenger and delete the old messages
-					challengerUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challenger)
-					_, _ = session.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
-					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
+					// If the game was launched in a channel, report the results back in the channel. Otherwise DM both
+					// users.
+					if r.activeGames[gameId].challengeChannelId != "" {
+						_, _ = session.ChannelMessageSend(r.activeGames[gameId].challengeChannelId, winnerMessage)
+					} else {
+						// Send results to challenger
+						challengerUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challenger)
+						_, _ = session.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
 
-					// Send results to challengee (if not the bot itself)
+						// Send results to challengee (if not the bot itself)
+						if r.activeGames[gameId].challengee != r.botId {
+							challengeeUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challengee)
+							_, _ = session.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
+						}
+					}
+
+					// Cleanup the old messages
+					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
 					if r.activeGames[gameId].challengee != r.botId {
-						challengeeUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challengee)
-						_, _ = session.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
 						_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
 					}
 
+					// Close out the game
 					delete(r.activeGames, gameId)
 				}
 			}
@@ -373,6 +422,9 @@ func (r rps) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend 
 		"Don't mess this up:",
 		"おまえはもうしんでいる:",
 		"I believe in you:",
+		"Whatever you do don't choose rock:",
+		"Whatever you do don't choose paper:",
+		"Whatever you do don't choose scissors:",
 	}
 
 	response := discordgo.MessageSend{
@@ -446,6 +498,7 @@ func (r rps) generateDecline(userId string) string {
 		fmt.Sprintf("<@%s> ain't got time fo dat.", userId),
 		fmt.Sprintf("Miss <@%s> with that shit.", userId),
 		fmt.Sprintf("<@%s> says to suck an egg.", userId),
+		fmt.Sprintf("<@%s> thinks you smell.", userId),
 	}
 
 	return options[rand.Int()%len(options)]

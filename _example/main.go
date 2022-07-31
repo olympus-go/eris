@@ -4,6 +4,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/eolso/eris"
 	"github.com/eolso/eris/plugins"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"os"
 	"os/signal"
@@ -11,6 +12,8 @@ import (
 )
 
 func main() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
 	token, ok := os.LookupEnv("DISCORD_TOKEN")
 	if !ok {
 		log.Fatal().Msg("env var DISCORD_TOKEN not set")
@@ -41,31 +44,6 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to open discord session")
 	}
-
-	//bot.DiscordSession.ChannelMessageSendComplex("976374934702014464", &discordgo.MessageSend{
-	//	Content: "halo",
-	//	Components: []discordgo.MessageComponent{
-	//		discordgo.ActionsRow{
-	//			Components: []discordgo.MessageComponent{
-	//				discordgo.Button{
-	//					Label:    "Characters",
-	//					Style:    discordgo.PrimaryButton,
-	//					CustomID: "21q_theme_characters",
-	//				},
-	//				discordgo.Button{
-	//					Label:    "Animals",
-	//					Style:    discordgo.PrimaryButton,
-	//					CustomID: "21q_theme_animals",
-	//				},
-	//				discordgo.Button{
-	//					Label:    "Objects",
-	//					Style:    discordgo.PrimaryButton,
-	//					CustomID: "21q_theme_objects",
-	//				},
-	//			},
-	//		},
-	//	},
-	//})
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
