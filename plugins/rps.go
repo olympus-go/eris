@@ -23,23 +23,31 @@ type rpsGame struct {
 }
 
 type rps struct {
-	botId         string
-	activeGames   map[string]*rpsGame
-	rockValue     string
-	paperValue    string
-	scissorsValue string
+	botId          string
+	activeGames    map[string]*rpsGame
+	rockValue      string
+	paperValue     string
+	scissorsValue  string
+	winChan        chan string
+	discordSession *discordgo.Session
 }
 
-func RPS(botId string) eris.Plugin {
+func RPS(botId string, discordSession *discordgo.Session) eris.Plugin {
 	rand.Seed(time.Now().UnixNano())
 
-	return rps{
-		botId:         botId,
-		activeGames:   make(map[string]*rpsGame),
-		rockValue:     "rock",
-		paperValue:    "newspaper",
-		scissorsValue: "scissors",
+	plugin := rps{
+		botId:          botId,
+		activeGames:    make(map[string]*rpsGame),
+		rockValue:      "rock",
+		paperValue:     "newspaper",
+		scissorsValue:  "scissors",
+		winChan:        make(chan string),
+		discordSession: discordSession,
 	}
+
+	go plugin.winCheckWorker()
+
+	return plugin
 }
 
 func (r rps) Name() string {
@@ -309,8 +317,23 @@ func (r rps) Handlers() map[string]any {
 				// Store interaction input in active game
 				if userId == r.activeGames[gameId].challenger {
 					r.activeGames[gameId].challengerSelection = moveSelection
+
+					// Update the prompt and remove the buttons
+					messageEdit := discordgo.NewMessageEdit(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
+					content := fmt.Sprintf("You selected :%s:.", moveSelection)
+					messageEdit.Content = &content
+					messageEdit.Components = []discordgo.MessageComponent{}
+					_, _ = session.ChannelMessageEditComplex(messageEdit)
+
 				} else if userId == r.activeGames[gameId].challengee {
 					r.activeGames[gameId].challengeeSelection = moveSelection
+
+					// Update the prompt and remove the buttons
+					messageEdit := discordgo.NewMessageEdit(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
+					content := fmt.Sprintf("You selected :%s:.", moveSelection)
+					messageEdit.Content = &content
+					messageEdit.Components = []discordgo.MessageComponent{}
+					_, _ = session.ChannelMessageEditComplex(messageEdit)
 				} else {
 					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -331,46 +354,7 @@ func (r rps) Handlers() map[string]any {
 					Type: discordgo.InteractionResponseDeferredMessageUpdate,
 				})
 
-				// Check if match is over
-				if r.activeGames[gameId].challengerSelection != "" && r.activeGames[gameId].challengeeSelection != "" {
-					winnerMessage := fmt.Sprintf("<@%s> :%s:  :vs:  :%s: <@%s>\n",
-						r.activeGames[gameId].challenger, r.activeGames[gameId].challengerSelection,
-						r.activeGames[gameId].challengeeSelection, r.activeGames[gameId].challengee)
-
-					switch r.moveCmp(r.activeGames[gameId].challengerSelection, r.activeGames[gameId].challengeeSelection) {
-					case -1:
-						winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challenger)
-					case 0:
-						winnerMessage += fmt.Sprintf("It's a tie!")
-					case 1:
-						winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challengee)
-					}
-
-					// If the game was launched in a channel, report the results back in the channel. Otherwise DM both
-					// users.
-					if r.activeGames[gameId].challengeChannelId != "" {
-						_, _ = session.ChannelMessageSend(r.activeGames[gameId].challengeChannelId, winnerMessage)
-					} else {
-						// Send results to challenger
-						challengerUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challenger)
-						_, _ = session.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
-
-						// Send results to challengee (if not the bot itself)
-						if r.activeGames[gameId].challengee != r.botId {
-							challengeeUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challengee)
-							_, _ = session.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
-						}
-					}
-
-					// Cleanup the old messages
-					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
-					if r.activeGames[gameId].challengee != r.botId {
-						_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
-					}
-
-					// Close out the game
-					delete(r.activeGames, gameId)
-				}
+				r.winChan <- gameId
 			}
 		}
 	}
@@ -547,4 +531,54 @@ func (r rps) moveCmp(m1, m2 string) int {
 	}
 
 	return 0
+}
+
+func (r rps) winCheckWorker() {
+	for gameId := range r.winChan {
+		if _, ok := r.activeGames[gameId]; !ok {
+			log.Debug().Str("game_id", gameId).Msg("game already processed")
+			continue
+		}
+
+		// Check if match is over
+		if r.activeGames[gameId].challengerSelection != "" && r.activeGames[gameId].challengeeSelection != "" {
+			winnerMessage := fmt.Sprintf("<@%s> :%s:  :vs:  :%s: <@%s>\n",
+				r.activeGames[gameId].challenger, r.activeGames[gameId].challengerSelection,
+				r.activeGames[gameId].challengeeSelection, r.activeGames[gameId].challengee)
+
+			switch r.moveCmp(r.activeGames[gameId].challengerSelection, r.activeGames[gameId].challengeeSelection) {
+			case -1:
+				winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challenger)
+			case 0:
+				winnerMessage += fmt.Sprintf("It's a tie!")
+			case 1:
+				winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challengee)
+			}
+
+			// If the game was launched in a channel, report the results back in the channel. Otherwise DM both
+			// users.
+			if r.activeGames[gameId].challengeChannelId != "" {
+				_, _ = r.discordSession.ChannelMessageSend(r.activeGames[gameId].challengeChannelId, winnerMessage)
+			} else {
+				// Send results to challenger
+				challengerUserChannel, _ := r.discordSession.UserChannelCreate(r.activeGames[gameId].challenger)
+				_, _ = r.discordSession.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
+
+				// Send results to challengee (if not the bot itself)
+				if r.activeGames[gameId].challengee != r.botId {
+					challengeeUserChannel, _ := r.discordSession.UserChannelCreate(r.activeGames[gameId].challengee)
+					_, _ = r.discordSession.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
+				}
+			}
+
+			// Cleanup the old messages
+			_ = r.discordSession.ChannelMessageDelete(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
+			if r.activeGames[gameId].challengee != r.botId {
+				_ = r.discordSession.ChannelMessageDelete(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
+			}
+
+			// Close out the game
+			delete(r.activeGames, gameId)
+		}
+	}
 }
