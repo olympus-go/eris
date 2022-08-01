@@ -3,7 +3,7 @@ package plugins
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/eris"
+	"github.com/eolso/eris/utils"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"math/rand"
@@ -23,7 +23,7 @@ type rpsGame struct {
 	startTime           time.Time
 }
 
-type rps struct {
+type RpsPlugin struct {
 	botId          string
 	activeGames    map[string]*rpsGame
 	rockValue      string
@@ -33,10 +33,10 @@ type rps struct {
 	discordSession *discordgo.Session
 }
 
-func RPS(botId string, discordSession *discordgo.Session) eris.Plugin {
+func RPS(botId string, discordSession *discordgo.Session) RpsPlugin {
 	rand.Seed(time.Now().UnixNano())
 
-	plugin := rps{
+	plugin := RpsPlugin{
 		botId:          botId,
 		activeGames:    make(map[string]*rpsGame),
 		rockValue:      "rock",
@@ -51,15 +51,15 @@ func RPS(botId string, discordSession *discordgo.Session) eris.Plugin {
 	return plugin
 }
 
-func (r rps) Name() string {
+func (r RpsPlugin) Name() string {
 	return "RockPaperScissors"
 }
 
-func (r rps) Description() string {
+func (r RpsPlugin) Description() string {
 	return "Enables challenging your friends to rock paper scissors matches"
 }
 
-func (r rps) Handlers() map[string]any {
+func (r RpsPlugin) Handlers() map[string]any {
 	handlers := make(map[string]any)
 
 	handlers["rps_handler"] = func(session *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -79,39 +79,21 @@ func (r rps) Handlers() map[string]any {
 
 			challengee, ok := applicationCommandData.Options[0].Value.(string)
 			if !ok {
-				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Something went wrong.",
-						Flags:   uint64(discordgo.MessageFlagsEphemeral),
-					},
-				})
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong.")
 				log.Error().Msgf("expected value to be string, instead got %T", applicationCommandData.Options[0].Value)
 				return
 			}
 
 			// Make sure the challenger didn't challenge themself
 			if challengee == challenger {
-				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "You can't challenge yourself.",
-						Flags:   uint64(discordgo.MessageFlagsEphemeral),
-					},
-				})
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "You can't challenge yourself.")
 				return
 			}
 
 			gameId := r.generateGameId(challenger, challengee)
 
 			if _, ok = r.activeGames[gameId]; ok {
-				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Finish your current match first!",
-						Flags:   uint64(discordgo.MessageFlagsEphemeral),
-					},
-				})
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Finish your current match first!")
 				return
 			}
 
@@ -139,13 +121,7 @@ func (r rps) Handlers() map[string]any {
 				log.Debug().Str("user_id", challenger).Msg("bot accepted the users challenge")
 
 				r.activeGames[gameId].challengeeSelection = r.generateMove()
-				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "I'll DM you.",
-						Flags:   uint64(discordgo.MessageFlagsEphemeral),
-					},
-				})
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "I'll DM you.")
 
 				challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
 				if err != nil {
@@ -163,13 +139,7 @@ func (r rps) Handlers() map[string]any {
 			} else {
 				challengeeUserChannel, err := session.UserChannelCreate(challengee)
 				if err != nil {
-					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Something went wrong.",
-							Flags:   uint64(discordgo.MessageFlagsEphemeral),
-						},
-					})
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong.")
 					log.Error().Err(err).Str("user_id", challengee).Msg("could not create DM with user")
 					return
 				}
@@ -180,18 +150,21 @@ func (r rps) Handlers() map[string]any {
 				}
 
 				r.activeGames[gameId].challengeeChallenge, err = session.ChannelMessageSendComplex(challengeeUserChannel.ID, r.generateChallenge(gameId, challenger, message, true))
-
-				err = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "Challenge issued.",
-						Flags:   uint64(discordgo.MessageFlagsEphemeral),
-					},
-				})
-				if err != nil {
-					log.Error().Err(err).Msg("failed to respond to interaction")
-				}
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Challenge issued.")
 				log.Debug().Str("game_id", gameId).Str("user_id", challengee).Msg("challenge sent to user")
+
+				go func() {
+					time.Sleep(30 * time.Second)
+					if _, ok := r.activeGames[gameId]; ok {
+						_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
+						_, _ = session.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+							Content: "Challenge timed out.",
+							Flags:   uint64(discordgo.MessageFlagsEphemeral),
+						})
+						log.Debug().Str("game_id", gameId).Msg("challenge timed out")
+						delete(r.activeGames, gameId)
+					}
+				}()
 			}
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
@@ -208,14 +181,9 @@ func (r rps) Handlers() map[string]any {
 				gameId := idSlice[3]
 				responseSelection := idSlice[2]
 
-				// Check if the game still exists. No ephemeral flags needed since it's a DM.
+				// Check if the game still exists
 				if _, ok := r.activeGames[gameId]; !ok {
-					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Game no longer exists",
-						},
-					})
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Game no longer exists.")
 					return
 				}
 
@@ -268,13 +236,7 @@ func (r rps) Handlers() map[string]any {
 
 					delete(r.activeGames, gameId)
 				default:
-					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Something went wrong.",
-							Flags:   uint64(discordgo.MessageFlagsEphemeral),
-						},
-					})
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong.")
 					log.Error().Str("gameId", gameId).Str("value", responseSelection).Msg("challenge response receive unexpected value")
 					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
 					delete(r.activeGames, gameId)
@@ -300,13 +262,7 @@ func (r rps) Handlers() map[string]any {
 
 				// Check if the game still exists
 				if _, ok := r.activeGames[gameId]; !ok {
-					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Game no longer exists",
-							Flags:   uint64(discordgo.MessageFlagsEphemeral),
-						},
-					})
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Game no longer exists.")
 					return
 				}
 
@@ -339,13 +295,7 @@ func (r rps) Handlers() map[string]any {
 						Str("selection", moveSelection).
 						Msg("user made a selection")
 				} else {
-					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Something went wrong. This isn't your game.",
-							Flags:   uint64(discordgo.MessageFlagsEphemeral),
-						},
-					})
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong. This isn't your game.")
 					log.Error().Str("gameId", gameId).Str("userId", userId).Msg("user interacted with button not associated with their game")
 					return
 				}
@@ -363,7 +313,7 @@ func (r rps) Handlers() map[string]any {
 	return handlers
 }
 
-func (r rps) Commands() map[string]*discordgo.ApplicationCommand {
+func (r RpsPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
 	commands["rps_cmd"] = &discordgo.ApplicationCommand{
@@ -388,19 +338,19 @@ func (r rps) Commands() map[string]*discordgo.ApplicationCommand {
 	return commands
 }
 
-func (r rps) Intents() []discordgo.Intent {
+func (r RpsPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
-func (r rps) LogEventChan() <-chan *zerolog.Event {
+func (r RpsPlugin) LogEventChan() <-chan *zerolog.Event {
 	return nil
 }
 
-func (r rps) challengeUser() {
+func (r RpsPlugin) challengeUser() {
 
 }
 
-func (r rps) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend {
+func (r RpsPlugin) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend {
 	options := []string{
 		"Choose wisely:",
 		"Make your move:",
@@ -447,7 +397,7 @@ func (r rps) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend 
 	return &response
 }
 
-func (r rps) generateChallenge(gameId string, challenger string, message string, enabled bool) *discordgo.MessageSend {
+func (r RpsPlugin) generateChallenge(gameId string, challenger string, message string, enabled bool) *discordgo.MessageSend {
 	challengeString := fmt.Sprintf("<@%s> challenged you to rock paper scissors.", challenger)
 	if message != "" {
 		challengeString += fmt.Sprintf("\n\n They also wanted to say: %s", message)
@@ -478,7 +428,7 @@ func (r rps) generateChallenge(gameId string, challenger string, message string,
 	return &responseData
 }
 
-func (r rps) generateDecline(userId string) string {
+func (r RpsPlugin) generateDecline(userId string) string {
 	options := []string{
 		fmt.Sprintf("<@%s> declined.", userId),
 		fmt.Sprintf("<@%s> said fuck off.", userId),
@@ -493,15 +443,15 @@ func (r rps) generateDecline(userId string) string {
 	return options[rand.Int()%len(options)]
 }
 
-func (r rps) generateMove() string {
+func (r RpsPlugin) generateMove() string {
 	return []string{r.rockValue, r.paperValue, r.scissorsValue}[rand.Int()%3]
 }
 
-func (r rps) generateGameId(challenger, challengee string) string {
+func (r RpsPlugin) generateGameId(challenger, challengee string) string {
 	return fmt.Sprintf("%svs%s", challenger, challengee)
 }
 
-func (r rps) moveCmp(m1, m2 string) int {
+func (r RpsPlugin) moveCmp(m1, m2 string) int {
 	switch m1 {
 	case "":
 		if m2 == "" {
@@ -538,7 +488,7 @@ func (r rps) moveCmp(m1, m2 string) int {
 	return 0
 }
 
-func (r rps) winCheckWorker() {
+func (r RpsPlugin) winCheckWorker() {
 	for gameId := range r.winChan {
 		if _, ok := r.activeGames[gameId]; !ok {
 			log.Debug().Str("game_id", gameId).Msg("game already processed")
