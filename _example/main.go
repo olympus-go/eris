@@ -28,10 +28,10 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create discord session")
 	}
 
-	bot.AddPlugin(plugins.Akinator(), "")
-	bot.AddPlugin(plugins.Quip(), "")
-	bot.AddPlugin(plugins.Stats(), "")
-	bot.AddPlugin(plugins.Spotify(), "")
+	bot.AddPlugin(plugins.Akinator())
+	bot.AddPlugin(plugins.Quip())
+	bot.AddPlugin(plugins.Stats())
+	bot.AddPlugin(plugins.Spotify(log.Logger))
 	bot.AddPlugin(plugins.RPS(bot.Id(), bot.DiscordSession))
 
 	var i discordgo.Intent

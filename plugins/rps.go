@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/eolso/eris"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"math/rand"
 	"strings"
@@ -195,11 +196,6 @@ func (r rps) Handlers() map[string]any {
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
 
-			// TODO maybe this is bad to have here
-			_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseDeferredMessageUpdate,
-			})
-
 			if strings.HasPrefix(messageComponentData.CustomID, "rps_challenge") {
 				idSlice := strings.Split(messageComponentData.CustomID, "_")
 				if len(idSlice) != 4 {
@@ -325,6 +321,10 @@ func (r rps) Handlers() map[string]any {
 					messageEdit.Components = []discordgo.MessageComponent{}
 					_, _ = session.ChannelMessageEditComplex(messageEdit)
 
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+						Str("selection", moveSelection).
+						Msg("user made a selection")
+
 				} else if userId == r.activeGames[gameId].challengee {
 					r.activeGames[gameId].challengeeSelection = moveSelection
 
@@ -334,6 +334,10 @@ func (r rps) Handlers() map[string]any {
 					messageEdit.Content = &content
 					messageEdit.Components = []discordgo.MessageComponent{}
 					_, _ = session.ChannelMessageEditComplex(messageEdit)
+
+					log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+						Str("selection", moveSelection).
+						Msg("user made a selection")
 				} else {
 					_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 						Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -345,9 +349,6 @@ func (r rps) Handlers() map[string]any {
 					log.Error().Str("gameId", gameId).Str("userId", userId).Msg("user interacted with button not associated with their game")
 					return
 				}
-				log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
-					Str("selection", moveSelection).
-					Msg("user made a selection")
 
 				// Send a successful response to the interaction
 				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -388,6 +389,10 @@ func (r rps) Commands() map[string]*discordgo.ApplicationCommand {
 }
 
 func (r rps) Intents() []discordgo.Intent {
+	return nil
+}
+
+func (r rps) LogEventChan() <-chan *zerolog.Event {
 	return nil
 }
 
