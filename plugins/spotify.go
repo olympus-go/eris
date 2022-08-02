@@ -16,12 +16,21 @@ import (
 	"time"
 )
 
+type authoredTrack struct {
+	track      spotify.Track
+	authorId   string
+	authorName string
+}
+
 type SpotifyPlugin struct {
 	player           *spotify.Playerr
-	trackQueue       []spotify.Track
+	trackQueue       []authoredTrack
 	playChan         chan spotify.Track
+	queueChan        chan spotify.Track
+	skipChan         chan bool
 	playInteractions map[string][]spotify.Track
 	isInVoice        bool
+	isPlaying        bool
 	voiceConnection  *discordgo.VoiceConnection
 	logger           zerolog.Logger
 
@@ -37,13 +46,12 @@ func Spotify(logger zerolog.Logger) *SpotifyPlugin {
 
 	plugin := SpotifyPlugin{
 		player:           player,
-		playChan:         make(chan spotify.Track),
+		queueChan:        make(chan spotify.Track, 100),
 		playInteractions: make(map[string][]spotify.Track),
 		logger:           logger.With().Str("plugin", "spotify").Logger(),
 	}
 
-	go plugin.queueManager()
-	go plugin.trackPlayer()
+	//go plugin.queueManager()
 
 	return &plugin
 }
@@ -96,7 +104,45 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 					return
 				}
 
+				s.playChan = make(chan spotify.Track)
+				s.skipChan = make(chan bool)
+				go s.trackPlayer()
+
+				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify join")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":tada:")
+			}
+		default:
+		}
+	}
+
+	handlers["spotify_leave_handler"] = func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			applicationCommandData := i.ApplicationCommandData()
+			if applicationCommandData.Name != "spotify" || applicationCommandData.Options[0].Name != "leave" {
+				return
+			}
+
+			if !s.isInVoice {
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "I'm not in a voice channel.")
+				return
+			} else {
+				if s.voiceConnection == nil {
+					s.logger.Error().Msg("expected to be in voice channel but connection is nil")
+				}
+
+				if err := s.voiceConnection.Disconnect(); err != nil {
+					s.logger.Error().Err(err).Msg("failed to disconnect from voice channel")
+					return
+				}
+
+				s.trackQueue = nil
+				close(s.queueChan)
+				close(s.skipChan)
+				s.isInVoice = false
+				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify leave")
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":wave:")
+
 			}
 		default:
 		}
@@ -114,6 +160,12 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			if len(applicationCommandData.Options) == 0 || len(applicationCommandData.Options[0].Options) == 0 {
 				s.logger.Error().Str("command", "spotify play").Msg("unexpected empty options for command")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong")
+				return
+			}
+
+			if !s.isInVoice {
+				s.logger.Error().Msg("play invoked before join")
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Summon me first before playing.")
 				return
 			}
 
@@ -139,10 +191,20 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				uid = uid[:64]
 			}
 			if err = utils.SendEphemeralInteractionResponse(session, i.Interaction, message, s.yesNoButtons(uid, true)...); err != nil {
-				s.logger.Error().Err(err).Msg("failed to send interaction response")
+				s.logger.Debug().Msg("failed to send interaction response")
 				return
 			}
 			s.playInteractions[uid] = tracks
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify play")
+
+			go func() {
+				time.Sleep(15 * time.Second)
+				if _, ok := s.playInteractions[uid]; ok {
+					delete(s.playInteractions, uid)
+					s.logger.Debug().Str("uid", uid).Msg("play interaction timed out")
+
+				}
+			}()
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
 			if !strings.HasPrefix(messageComponentData.CustomID, "spotify_play") {
@@ -157,21 +219,22 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 			action := idSplit[2]
 			uid := idSplit[3]
+			userId := utils.GetInteractionUserId(i.Interaction)
 
 			// The interaction was already closed out
 			if _, ok := s.playInteractions[uid]; !ok {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "This song list is no longer available.")
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "This song list is no longer available. Try searching again.")
 				return
 			}
 
 			switch action {
 			case "yes":
 				track := s.playInteractions[uid][0]
-				s.enqueueTrack(track)
+				s.enqueueTrack(authoredTrack{track, utils.GetInteractionUserId(i.Interaction), utils.GetInteractionUserName(i.Interaction)})
 				message := fmt.Sprintf("%s by %s added to queue.", track.Name(), track.Artist())
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
-				//s.songQueue <- track
 				delete(s.playInteractions, uid)
+				s.logger.Debug().Str("user_id", userId).Str("track", track.Name()).Msg("user enqueued track")
 			case "no":
 				s.playInteractions[uid] = s.playInteractions[uid][1:]
 				if len(s.playInteractions[uid]) == 0 {
@@ -181,6 +244,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				track := s.playInteractions[uid][0]
 				message := fmt.Sprintf("Is this your song?\n```Name: %s\nArtist: %s\n```%s", track.Name(), track.Artist(), track.Image())
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message, s.yesNoButtons(uid, true)...)
+				s.logger.Debug().Str("user_id", userId).Str("track", track.Name()).Msg("user responded no to track query")
 			}
 		}
 	}
@@ -194,8 +258,16 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			}
 
 			message := ""
-			for _, track := range s.trackQueue {
-				message += fmt.Sprintf("%s - %s\n", track.Name(), track.Artist())
+			for index, aTrack := range s.trackQueue {
+				if index == 0 {
+					message += "Currently playing:\n"
+					message += fmt.Sprintf("  %s - %s (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(), aTrack.authorName)
+					if len(s.trackQueue) > 1 {
+						message += "Up next:\n"
+					}
+				} else {
+					message += fmt.Sprintf("  %s - %s (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(), aTrack.authorName)
+				}
 			}
 
 			if message == "" {
@@ -204,7 +276,34 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				message = fmt.Sprintf("```%s```", message)
 			}
 
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify queue")
 			_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
+		}
+	}
+
+	handlers["spotify_skip_handler"] = func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			applicationCommandData := i.ApplicationCommandData()
+			if applicationCommandData.Name != "spotify" || applicationCommandData.Options[0].Name != "skip" {
+				return
+			}
+
+			if !s.isInVoice || !s.isPlaying {
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Nothing to skip.")
+				return
+			} else {
+				userId := utils.GetInteractionUserId(i.Interaction)
+				if s.trackQueue[0].authorId != userId {
+					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "You cannot skip a track you didn't queue.")
+					s.logger.Debug().Str("user_id", userId).Str("author_id", s.trackQueue[0].authorId).Str("track", s.trackQueue[0].track.Name()).Msg("user attempted to skip track")
+					return
+				}
+				s.logger.Debug().Str("user_id", userId).Str("track", s.trackQueue[0].track.Name()).Msg("user skipped track")
+				s.skipChan <- true
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":gun:")
+			}
+		default:
 		}
 	}
 
@@ -245,6 +344,16 @@ func (s *SpotifyPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 			{
 				Name:        "join",
 				Description: "Requests the bot to join your voice channel",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+			{
+				Name:        "leave",
+				Description: "Requests the bot to leave the voice channel",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+			{
+				Name:        "skip",
+				Description: "Skip the currently playing song",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 		},
@@ -293,59 +402,59 @@ func (s *SpotifyPlugin) yesNoButtons(uid string, enabled bool) []discordgo.Messa
 	}
 }
 
-func (s *SpotifyPlugin) enqueueTrack(track spotify.Track) {
+func (s *SpotifyPlugin) enqueueTrack(track authoredTrack) {
 	s.queueLock.Lock()
+	s.queueChan <- track.track
 	s.trackQueue = append(s.trackQueue, track)
 	s.queueLock.Unlock()
 }
 
-func (s *SpotifyPlugin) dequeueTrack() spotify.Track {
-	if len(s.trackQueue) == 0 {
-		return spotify.Track{}
-	}
-
-	s.queueLock.Lock()
-
-	track := s.trackQueue[0]
-	s.trackQueue = s.trackQueue[1:]
-	s.queueLock.Unlock()
-
-	return track
-}
-
-func (s *SpotifyPlugin) queueManager() {
-	for {
-		if len(s.trackQueue) == 0 {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		s.playChan <- s.dequeueTrack()
-	}
-}
+//func (s *SpotifyPlugin) dequeueTrack() spotify.Track {
+//	if len(s.trackQueue) == 0 {
+//		return spotify.Track{}
+//	}
+//
+//	s.queueLock.Lock()
+//
+//	track := s.trackQueue[0]
+//	s.trackQueue = s.trackQueue[1:]
+//	s.queueLock.Unlock()
+//
+//	return track
+//}
 
 func (s *SpotifyPlugin) trackPlayer() {
-	for song := range s.playChan {
-		r, _ := s.player.DownloadTrack(song)
+	for track := range s.queueChan {
+		r, _ := s.player.DownloadTrack(track)
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
 		defer encodeSession.Cleanup()
 		var buf bytes.Buffer
 		io.Copy(&buf, encodeSession)
 		decoder := dca.NewDecoder(&buf)
+		s.isPlaying = true
 		s.voiceConnection.Speaking(true)
+	playLoop:
 		for {
-			frame, err := decoder.OpusFrame()
-			if err != nil {
-				if err != io.EOF {
-				}
-				break
-			}
-
 			select {
-			case s.voiceConnection.OpusSend <- frame:
-			case <-time.After(time.Second):
-				return
+			case <-s.skipChan:
+				break playLoop
+			default:
+				frame, err := decoder.OpusFrame()
+				if err != nil {
+					break playLoop
+				}
+
+				select {
+				case s.voiceConnection.OpusSend <- frame:
+				case <-time.After(time.Second):
+					break playLoop
+				}
 			}
 		}
+		s.isPlaying = false
 		s.voiceConnection.Speaking(false)
+		s.queueLock.Lock()
+		s.trackQueue = s.trackQueue[1:]
+		s.queueLock.Unlock()
 	}
 }
