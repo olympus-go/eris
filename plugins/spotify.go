@@ -366,21 +366,6 @@ func (s *SpotifyPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
-func (s *SpotifyPlugin) parsePlayOptions(options ...*discordgo.ApplicationCommandInteractionDataOption) (song string, artist string, album string) {
-	for _, option := range options {
-		switch option.Name {
-		case "name":
-			song, _ = option.Value.(string)
-		case "artist":
-			artist, _ = option.Value.(string)
-		case "album":
-			album, _ = option.Value.(string)
-		}
-	}
-
-	return song, artist, album
-}
-
 func (s *SpotifyPlugin) yesNoButtons(uid string, enabled bool) []discordgo.MessageComponent {
 	return []discordgo.MessageComponent{
 		discordgo.ActionsRow{
@@ -425,7 +410,14 @@ func (s *SpotifyPlugin) enqueueTrack(track authoredTrack) {
 
 func (s *SpotifyPlugin) trackPlayer() {
 	for track := range s.queueChan {
-		r, _ := s.player.DownloadTrack(track)
+		r, err := s.player.DownloadTrack(track)
+		if err != nil {
+			s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
+			s.queueLock.Lock()
+			s.trackQueue = s.trackQueue[1:]
+			s.queueLock.Unlock()
+			continue
+		}
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
 		defer encodeSession.Cleanup()
 		var buf bytes.Buffer
@@ -453,8 +445,5 @@ func (s *SpotifyPlugin) trackPlayer() {
 		}
 		s.isPlaying = false
 		s.voiceConnection.Speaking(false)
-		s.queueLock.Lock()
-		s.trackQueue = s.trackQueue[1:]
-		s.queueLock.Unlock()
 	}
 }
