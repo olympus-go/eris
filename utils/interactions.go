@@ -12,3 +12,32 @@ func SendEphemeralInteractionResponse(session *discordgo.Session, interaction *d
 		},
 	})
 }
+
+func GetInteractionUserId(interaction *discordgo.Interaction) string {
+	if interaction.User != nil {
+		return interaction.User.ID
+	}
+
+	if interaction.Member != nil {
+		return interaction.Member.User.ID
+	}
+
+	return ""
+}
+
+func GetInteractionUserName(interaction *discordgo.Interaction) string {
+	if interaction.User != nil {
+		return interaction.User.Username
+	}
+
+	if interaction.Member != nil {
+		if interaction.Member.Nick != "" {
+			return interaction.Member.Nick
+		}
+		if interaction.Member.User != nil {
+			return interaction.Member.User.Username
+		}
+	}
+
+	return ""
+}
