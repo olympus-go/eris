@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
@@ -10,7 +9,6 @@ import (
 	"github.com/eolso/eris/utils"
 	"github.com/jonas747/dca"
 	"github.com/rs/zerolog"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -195,7 +193,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 			s.playInteractions[uid] = tracks
-			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify play")
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
 
 			go func() {
 				time.Sleep(15 * time.Second)
@@ -229,12 +228,16 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 			switch action {
 			case "yes":
-				track := s.playInteractions[uid][0]
-				s.enqueueTrack(authoredTrack{track, utils.GetInteractionUserId(i.Interaction), utils.GetInteractionUserName(i.Interaction)})
-				message := fmt.Sprintf("%s by %s added to queue.", track.Name(), track.Artist())
+				aTrack := authoredTrack{
+					track:      s.playInteractions[uid][0],
+					authorId:   utils.GetInteractionUserId(i.Interaction),
+					authorName: utils.GetInteractionUserName(i.Interaction),
+				}
+				s.enqueueTrack(aTrack)
+				message := fmt.Sprintf("%s by %s added to queue.", aTrack.track.Name(), aTrack.track.Artist())
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
 				delete(s.playInteractions, uid)
-				s.logger.Debug().Str("user_id", userId).Str("track", track.Name()).Msg("user enqueued track")
+				s.logger.Debug().Str("user_id", userId).Interface("track", s.buildTrackObject(aTrack.track)).Msg("user enqueued track")
 			case "no":
 				s.playInteractions[uid] = s.playInteractions[uid][1:]
 				if len(s.playInteractions[uid]) == 0 {
@@ -394,20 +397,6 @@ func (s *SpotifyPlugin) enqueueTrack(track authoredTrack) {
 	s.queueLock.Unlock()
 }
 
-//func (s *SpotifyPlugin) dequeueTrack() spotify.Track {
-//	if len(s.trackQueue) == 0 {
-//		return spotify.Track{}
-//	}
-//
-//	s.queueLock.Lock()
-//
-//	track := s.trackQueue[0]
-//	s.trackQueue = s.trackQueue[1:]
-//	s.queueLock.Unlock()
-//
-//	return track
-//}
-
 func (s *SpotifyPlugin) trackPlayer() {
 	for track := range s.queueChan {
 		r, err := s.player.DownloadTrack(track)
@@ -419,10 +408,6 @@ func (s *SpotifyPlugin) trackPlayer() {
 			continue
 		}
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
-		defer encodeSession.Cleanup()
-		var buf bytes.Buffer
-		io.Copy(&buf, encodeSession)
-		decoder := dca.NewDecoder(&buf)
 		s.isPlaying = true
 		s.voiceConnection.Speaking(true)
 	playLoop:
@@ -431,7 +416,7 @@ func (s *SpotifyPlugin) trackPlayer() {
 			case <-s.skipChan:
 				break playLoop
 			default:
-				frame, err := decoder.OpusFrame()
+				frame, err := encodeSession.OpusFrame()
 				if err != nil {
 					break playLoop
 				}
@@ -445,5 +430,19 @@ func (s *SpotifyPlugin) trackPlayer() {
 		}
 		s.isPlaying = false
 		s.voiceConnection.Speaking(false)
+		s.queueLock.Lock()
+		s.trackQueue = s.trackQueue[1:]
+		s.queueLock.Unlock()
+		encodeSession.Cleanup()
+	}
+}
+
+func (s *SpotifyPlugin) buildTrackObject(track spotify.Track) any {
+	return struct {
+		Name   string
+		Artist string
+	}{
+		track.Name(),
+		track.Artist(),
 	}
 }
