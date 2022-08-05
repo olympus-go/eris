@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
@@ -21,16 +22,17 @@ type authoredTrack struct {
 }
 
 type SpotifyPlugin struct {
-	player           *spotify.Playerr
-	trackQueue       []authoredTrack
-	playChan         chan spotify.Track
-	queueChan        chan spotify.Track
-	skipChan         chan bool
-	playInteractions map[string][]spotify.Track
-	isInVoice        bool
-	isPlaying        bool
-	voiceConnection  *discordgo.VoiceConnection
-	logger           zerolog.Logger
+	player            *spotify.Playerr
+	trackQueue        []authoredTrack
+	playChan          chan spotify.Track
+	queueChan         chan spotify.Track
+	skipChan          chan bool
+	trackPlayerCancel func()
+	playInteractions  map[string][]spotify.Track
+	isInVoice         bool
+	isPlaying         bool
+	voiceConnection   *discordgo.VoiceConnection
+	logger            zerolog.Logger
 
 	queueLock sync.RWMutex
 }
@@ -44,7 +46,6 @@ func Spotify(logger zerolog.Logger) *SpotifyPlugin {
 
 	plugin := SpotifyPlugin{
 		player:           player,
-		queueChan:        make(chan spotify.Track, 100),
 		playInteractions: make(map[string][]spotify.Track),
 		logger:           logger.With().Str("plugin", "spotify").Logger(),
 	}
@@ -102,11 +103,15 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 					return
 				}
 
+				s.queueChan = make(chan spotify.Track, 100)
 				s.playChan = make(chan spotify.Track)
 				s.skipChan = make(chan bool)
-				go s.trackPlayer()
+				var ctx context.Context
+				ctx, s.trackPlayerCancel = context.WithCancel(context.Background())
+				go s.trackPlayer(ctx)
 
-				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify join")
+				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Interface("command", applicationCommandData).Msg("user invoked slash command")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":tada:")
 			}
 		default:
@@ -129,16 +134,19 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 					s.logger.Error().Msg("expected to be in voice channel but connection is nil")
 				}
 
+				s.trackPlayerCancel()
+				s.trackQueue = nil
+				close(s.queueChan)
+				close(s.skipChan)
+
 				if err := s.voiceConnection.Disconnect(); err != nil {
 					s.logger.Error().Err(err).Msg("failed to disconnect from voice channel")
 					return
 				}
 
-				s.trackQueue = nil
-				close(s.queueChan)
-				close(s.skipChan)
 				s.isInVoice = false
-				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify leave")
+				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Interface("command", applicationCommandData).Msg("user invoked slash command")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":wave:")
 
 			}
@@ -162,7 +170,6 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			}
 
 			if !s.isInVoice {
-				s.logger.Error().Msg("play invoked before join")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Summon me first before playing.")
 				return
 			}
@@ -279,7 +286,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				message = fmt.Sprintf("```%s```", message)
 			}
 
-			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).Msg("user invoked spotify queue")
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
 			_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
 		}
 	}
@@ -397,14 +405,28 @@ func (s *SpotifyPlugin) enqueueTrack(track authoredTrack) {
 	s.queueLock.Unlock()
 }
 
-func (s *SpotifyPlugin) trackPlayer() {
+func (s *SpotifyPlugin) dequeueTrack() {
+	if len(s.trackQueue) == 0 {
+		return
+	}
+	s.queueLock.Lock()
+	s.trackQueue = s.trackQueue[1:]
+	s.queueLock.Unlock()
+}
+
+func (s *SpotifyPlugin) trackPlayer(ctx context.Context) {
 	for track := range s.queueChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		//var packetCount int
+		//trackDuration := track.Duration()
 		r, err := s.player.DownloadTrack(track)
 		if err != nil {
 			s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
-			s.queueLock.Lock()
-			s.trackQueue = s.trackQueue[1:]
-			s.queueLock.Unlock()
+			s.dequeueTrack()
 			continue
 		}
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
@@ -415,6 +437,8 @@ func (s *SpotifyPlugin) trackPlayer() {
 			select {
 			case <-s.skipChan:
 				break playLoop
+			case <-ctx.Done():
+				return
 			default:
 				frame, err := encodeSession.OpusFrame()
 				if err != nil {
@@ -423,6 +447,7 @@ func (s *SpotifyPlugin) trackPlayer() {
 
 				select {
 				case s.voiceConnection.OpusSend <- frame:
+					//packetCount++
 				case <-time.After(time.Second):
 					break playLoop
 				}
@@ -430,9 +455,7 @@ func (s *SpotifyPlugin) trackPlayer() {
 		}
 		s.isPlaying = false
 		s.voiceConnection.Speaking(false)
-		s.queueLock.Lock()
-		s.trackQueue = s.trackQueue[1:]
-		s.queueLock.Unlock()
+		s.dequeueTrack()
 		encodeSession.Cleanup()
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/eolso/eris"
+	"github.com/eolso/eris/utils"
 	"runtime"
 	"time"
 )
@@ -12,42 +13,35 @@ const statusString = `Uptime: %s
 Runtime: %s
 Version: %s`
 
-type stats struct {
+type StatsPlugin struct {
 	startTime time.Time
 	runtime   string
 }
 
-func Stats() eris.Plugin {
-	return stats{
+func Stats() StatsPlugin {
+	return StatsPlugin{
 		startTime: time.Now(),
 		runtime:   fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 	}
 }
 
-func (s stats) Name() string {
+func (s StatsPlugin) Name() string {
 	return "Stats"
 }
 
-func (s stats) Description() string {
+func (s StatsPlugin) Description() string {
 	return "Prints out various technical stats"
 }
 
-func (s stats) Handlers() map[string]any {
+func (s StatsPlugin) Handlers() map[string]any {
 	handlers := make(map[string]any)
 
 	handlers["stats_handler"] = func(session *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if i.ApplicationCommandData().Name == "stats" {
-				_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "```" + fmt.Sprintf(statusString,
-							time.Since(s.startTime).Round(time.Second).String(),
-							s.runtime,
-							eris.Version) + "```",
-					},
-				})
+				message := fmt.Sprintf(statusString, time.Since(s.startTime).Round(time.Second).String(), s.runtime, eris.Version)
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "```"+message+"```")
 			}
 		}
 	}
@@ -55,7 +49,7 @@ func (s stats) Handlers() map[string]any {
 	return handlers
 }
 
-func (s stats) Commands() map[string]*discordgo.ApplicationCommand {
+func (s StatsPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
 	commands["stats_command"] = &discordgo.ApplicationCommand{
@@ -66,6 +60,6 @@ func (s stats) Commands() map[string]*discordgo.ApplicationCommand {
 	return commands
 }
 
-func (s stats) Intents() []discordgo.Intent {
+func (s StatsPlugin) Intents() []discordgo.Intent {
 	return nil
 }
