@@ -22,6 +22,7 @@ type authoredTrack struct {
 
 type SpotifyPlugin struct {
 	player           *spotify.Playerr
+	framesProcessed  int
 	trackQueue       []authoredTrack
 	playChan         chan spotify.Track
 	queueChan        chan spotify.Track
@@ -264,7 +265,10 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			for index, aTrack := range s.trackQueue {
 				if index == 0 {
 					message += "Currently playing:\n"
-					message += fmt.Sprintf("  %s - %s (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(), aTrack.authorName)
+					timeElapsed := (time.Duration(s.framesProcessed*20) * time.Millisecond).Round(time.Second).String()
+					totalTime := (time.Duration(aTrack.track.Duration()) * time.Millisecond).Round(time.Second).String()
+					message += fmt.Sprintf("  %s - %s (@%s) [%s/%s]\n", aTrack.track.Name(), aTrack.track.Artist(),
+						aTrack.authorName, timeElapsed, totalTime)
 					if len(s.trackQueue) > 1 {
 						message += "Up next:\n"
 					}
@@ -397,42 +401,61 @@ func (s *SpotifyPlugin) enqueueTrack(track authoredTrack) {
 	s.queueLock.Unlock()
 }
 
+func (s *SpotifyPlugin) dequeueTrack() {
+	if len(s.trackQueue) == 0 {
+		return
+	}
+
+	s.queueLock.Lock()
+	s.trackQueue = s.trackQueue[1:]
+	s.queueLock.Unlock()
+}
+
 func (s *SpotifyPlugin) trackPlayer() {
 	for track := range s.queueChan {
 		r, err := s.player.DownloadTrack(track)
 		if err != nil {
 			s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
-			s.queueLock.Lock()
-			s.trackQueue = s.trackQueue[1:]
-			s.queueLock.Unlock()
+			s.dequeueTrack()
 			continue
 		}
+		s.framesProcessed = 0
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
+		encodedFrames := make(chan []byte, 500)
+		go func(encodeSession *dca.EncodeSession, encodedFrames chan<- []byte) {
+			for {
+				frame, err := encodeSession.OpusFrame()
+				if err != nil {
+					close(encodedFrames)
+					return
+				}
+				encodedFrames <- frame
+			}
+		}(encodeSession, encodedFrames)
+
 		s.isPlaying = true
-		s.voiceConnection.Speaking(true)
+		_ = s.voiceConnection.Speaking(true)
 	playLoop:
 		for {
 			select {
 			case <-s.skipChan:
 				break playLoop
-			default:
-				frame, err := encodeSession.OpusFrame()
-				if err != nil {
+			case frame, ok := <-encodedFrames:
+				if !ok {
 					break playLoop
 				}
 
 				select {
 				case s.voiceConnection.OpusSend <- frame:
+					s.framesProcessed++
 				case <-time.After(time.Second):
 					break playLoop
 				}
 			}
 		}
 		s.isPlaying = false
-		s.voiceConnection.Speaking(false)
-		s.queueLock.Lock()
-		s.trackQueue = s.trackQueue[1:]
-		s.queueLock.Unlock()
+		_ = s.voiceConnection.Speaking(false)
+		s.dequeueTrack()
 		encodeSession.Cleanup()
 	}
 }
