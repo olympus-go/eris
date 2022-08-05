@@ -52,7 +52,7 @@ func RPS(botId string, discordSession *discordgo.Session) RpsPlugin {
 }
 
 func (r RpsPlugin) Name() string {
-	return "RockPaperScissors"
+	return "Rock Paper Scissors"
 }
 
 func (r RpsPlugin) Description() string {
@@ -120,7 +120,6 @@ func (r RpsPlugin) Handlers() map[string]any {
 			if challengee == r.botId {
 				log.Debug().Str("user_id", challenger).Msg("bot accepted the users challenge")
 
-				r.activeGames[gameId].challengeeSelection = r.generateMove()
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "I'll DM you.")
 
 				challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
@@ -134,8 +133,10 @@ func (r RpsPlugin) Handlers() map[string]any {
 					log.Error().Err(err).Str("user_id", r.activeGames[gameId].challenger).Msg("could not send DM to user")
 					return
 				}
-				log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
-					Msg("prompt sent to user")
+				log.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).Msg("prompt sent to user")
+				move := r.generateMove()
+				r.activeGames[gameId].challengeeSelection = move
+				log.Debug().Str("game_id", gameId).Str("selection", move).Msg("bot made a selection")
 			} else {
 				challengeeUserChannel, err := session.UserChannelCreate(challengee)
 				if err != nil {

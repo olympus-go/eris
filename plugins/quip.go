@@ -2,60 +2,91 @@ package plugins
 
 import (
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/eris"
 	"strings"
 )
 
-type quip struct {
+type QuipPlugin struct {
+	quips []struct {
+		triggerType string
+		trigger     string
+		response    string
+	}
 }
 
-func Quip() eris.Plugin {
-	return quip{}
+func Quip() *QuipPlugin {
+	var plugin QuipPlugin
+
+	plugin.newQuip("contains", "surely you can't be serious", "I am serious, and don't call me shirley")
+	plugin.newQuip("contains", "thanks george", "I gotchu boo")
+	plugin.newQuip("is", "george", "what?")
+	plugin.newQuip("starts_with", "george play", "SIKE you thought")
+	plugin.newQuip("starts_with", "g play", "SIKE you thought")
+	plugin.newQuip("is", "brb", "I miss you already")
+	plugin.newQuip("contains", "wanna play some paladins?", "you never invite me to play paladins :(")
+	plugin.newQuip("contains", "george do you wanna play some paladins?", "no hehehehe")
+	plugin.newQuip("contains", "do you wanna play some paladins george?", "no hehehehe")
+	plugin.newQuip("contains", "george do you wanna play?", "no hehehehe")
+	plugin.newQuip("contains", "do you wanna play george?", "no hehehehe")
+	plugin.newQuip("contains", "what's 9 + 10?", "21")
+
+	return &plugin
 }
 
-func (q quip) Name() string {
+func (q *QuipPlugin) Name() string {
 	return "Quip"
 }
 
-func (q quip) Description() string {
+func (q *QuipPlugin) Description() string {
 	return "Enables configurable quips"
 }
 
-func (q quip) Handlers() map[string]any {
+func (q *QuipPlugin) Handlers() map[string]any {
 	handlers := make(map[string]any)
 
 	handlers["quip_handler"] = func(session *discordgo.Session, message *discordgo.MessageCreate) {
-		if strings.Contains(message.Content, "surely you can't be serious") {
-			_, _ = session.ChannelMessageSend(message.ChannelID, "I am serious, and don't call me Shirley.")
+		for _, quip := range q.quips {
+			switch quip.triggerType {
+			case "contains":
+				if strings.Contains(strings.ToLower(message.Content), strings.ToLower(quip.trigger)) {
+					_, _ = session.ChannelMessageSend(message.ChannelID, quip.response)
+				}
+			case "starts_with":
+				if strings.HasPrefix(strings.ToLower(message.Content), strings.ToLower(quip.trigger)) {
+					_, _ = session.ChannelMessageSend(message.ChannelID, quip.response)
+				}
+			case "ends_with":
+				if strings.HasSuffix(strings.ToLower(message.Content), strings.ToLower(quip.trigger)) {
+					_, _ = session.ChannelMessageSend(message.ChannelID, quip.response)
+				}
+			case "is":
+				if strings.ToLower(message.Content) == strings.ToLower(quip.trigger) {
+					_, _ = session.ChannelMessageSend(message.ChannelID, quip.response)
+				}
+			}
 		}
 	}
 
 	return handlers
 }
 
-func (q quip) Commands() map[string]*discordgo.ApplicationCommand {
+func (q *QuipPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	return nil
 }
 
-func (q quip) Intents() []discordgo.Intent {
+func (q *QuipPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
-func QuipHandler(handler func(*discordgo.Session, *discordgo.MessageCreate)) func(*eris.Bot) {
-	return func(b *eris.Bot) {
-		b.AddHandler("quip", handler)
-	}
-}
-
-func DefaultQuip(bot *eris.Bot) {
-	defaultQuipHandler := func(session *discordgo.Session, message *discordgo.MessageCreate) {
-		if strings.Contains(message.Content, "surely you can't be serious") {
-			_, err := session.ChannelMessageSend(message.ChannelID, "I am serious, and don't call me Shirley.")
-			if err != nil {
-				bot.ErrChan <- err
-			}
-		}
+func (q *QuipPlugin) newQuip(triggerType string, trigger string, response string) {
+	quip := struct {
+		triggerType string
+		trigger     string
+		response    string
+	}{
+		triggerType: triggerType,
+		trigger:     trigger,
+		response:    response,
 	}
 
-	bot.AddHandler("quip", defaultQuipHandler)
+	q.quips = append(q.quips, quip)
 }

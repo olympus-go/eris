@@ -3,6 +3,7 @@ package eris
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
+	"github.com/eolso/eris/utils"
 	"github.com/rs/zerolog/log"
 )
 
@@ -122,7 +123,7 @@ func (b *Bot) pluginCommand() *discordgo.ApplicationCommand {
 }
 
 func (b *Bot) pluginHandler() any {
-	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	return func(session *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if i.ApplicationCommandData().Name == "plugins" {
@@ -130,12 +131,7 @@ func (b *Bot) pluginHandler() any {
 				for _, plugin := range b.plugins {
 					message += fmt.Sprintf("%s - %s\n", plugin.Name(), plugin.Description())
 				}
-				b.ErrChan <- s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "```" + message + "```",
-					},
-				})
+				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "```"+message+"```")
 			}
 		}
 	}
