@@ -3,9 +3,8 @@ package plugins
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/athena"
-	"github.com/eolso/eris"
-	"github.com/eolso/eris/utils"
+	"github.com/olympus-go/athena"
+	"github.com/olympus-go/eris/utils"
 	"github.com/rs/zerolog/log"
 	"strings"
 )
@@ -24,7 +23,7 @@ var answerIdMap = map[string]int{
 	"21q_answer_probably_not": 4,
 }
 
-type akinator struct {
+type AkinatorPlugin struct {
 	client          *athena.Client
 	lastInteraction *discordgo.Interaction
 	gameOwnerId     string
@@ -33,22 +32,22 @@ type akinator struct {
 	guessThreshold  float64
 }
 
-func Akinator() eris.Plugin {
-	return &akinator{
+func Akinator() *AkinatorPlugin {
+	return &AkinatorPlugin{
 		questionLimit:  40,
 		guessThreshold: 90.0,
 	}
 }
 
-func (a *akinator) Name() string {
+func (a *AkinatorPlugin) Name() string {
 	return "Akinator"
 }
 
-func (a *akinator) Description() string {
+func (a *AkinatorPlugin) Description() string {
 	return "Play a 21 question game"
 }
 
-func (a *akinator) Handlers() map[string]any {
+func (a *AkinatorPlugin) Handlers() map[string]any {
 	handlers := make(map[string]any)
 
 	handlers["aki_start_handler"] = func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -187,7 +186,7 @@ func (a *akinator) Handlers() map[string]any {
 	return handlers
 }
 
-func (a *akinator) Commands() map[string]*discordgo.ApplicationCommand {
+func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
 	commands["aki_cmd"] = &discordgo.ApplicationCommand{
@@ -215,7 +214,7 @@ func (a *akinator) Commands() map[string]*discordgo.ApplicationCommand {
 	return commands
 }
 
-func (a *akinator) Intents() []discordgo.Intent {
+func (a *AkinatorPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
@@ -248,7 +247,7 @@ func (a *akinator) Intents() []discordgo.Intent {
 //	return &responseData
 //}
 
-func (a *akinator) generateQuestionResponseData(buttonDisabled bool) *discordgo.MessageSend {
+func (a *AkinatorPlugin) generateQuestionResponseData(buttonDisabled bool) *discordgo.MessageSend {
 	var actionsRow discordgo.ActionsRow
 	for _, answer := range a.client.Answers() {
 		button := discordgo.Button{

@@ -3,8 +3,7 @@ package plugins
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/eris"
-	"github.com/eolso/eris/utils"
+	"github.com/olympus-go/eris/utils"
 	"runtime"
 	"time"
 )
@@ -40,7 +39,7 @@ func (s StatsPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			if i.ApplicationCommandData().Name == "stats" {
-				message := fmt.Sprintf(statusString, time.Since(s.startTime).Round(time.Second).String(), s.runtime, eris.Version)
+				message := fmt.Sprintf(statusString, time.Since(s.startTime).Round(time.Second).String(), s.runtime, "v0.0.1")
 				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "```"+message+"```")
 			}
 		}

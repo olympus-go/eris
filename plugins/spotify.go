@@ -5,10 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/apollo/spotify"
-	"github.com/eolso/eris"
-	"github.com/eolso/eris/utils"
 	"github.com/jonas747/dca"
+	"github.com/olympus-go/apollo/spotify"
+	"github.com/olympus-go/eris/utils"
 	"github.com/rs/zerolog"
 	"strings"
 	"sync"
@@ -159,7 +158,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if !eris.CheckApplicationCommandData(applicationCommandData, "spotify", "play") {
+			if !utils.CheckApplicationCommandData(applicationCommandData, "spotify", "play") {
 				return
 			}
 
@@ -264,7 +263,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if !eris.CheckApplicationCommandData(applicationCommandData, "spotify", "queue") {
+			if !utils.CheckApplicationCommandData(applicationCommandData, "spotify", "queue") {
 				return
 			}
 
@@ -274,8 +273,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 					message += "Currently playing:\n"
 					timeElapsed := (time.Duration(s.framesProcessed*20) * time.Millisecond).Round(time.Second).String()
 					totalTime := (time.Duration(aTrack.track.Duration()) * time.Millisecond).Round(time.Second).String()
-					message += fmt.Sprintf("  %s - %s (@%s) [%s/%s]\n", aTrack.track.Name(), aTrack.track.Artist(),
-						aTrack.authorName, timeElapsed, totalTime)
+					message += fmt.Sprintf("  %s - %s [%s/%s] (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(),
+						timeElapsed, totalTime, aTrack.authorName)
 					if len(s.trackQueue) > 1 {
 						message += "Up next:\n"
 					}
@@ -476,8 +475,10 @@ func (s *SpotifyPlugin) buildTrackObject(track spotify.Track) any {
 	return struct {
 		Name   string
 		Artist string
+		Album  string
 	}{
 		track.Name(),
 		track.Artist(),
+		track.Album(),
 	}
 }

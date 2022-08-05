@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/eris"
-	"github.com/eolso/eris/plugins"
+	"github.com/olympus-go/eris"
+	"github.com/olympus-go/eris/plugins"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"os"

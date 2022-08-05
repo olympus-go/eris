@@ -3,7 +3,7 @@ package plugins
 import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/eolso/eris/utils"
+	"github.com/olympus-go/eris/utils"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"math/rand"

@@ -91,3 +91,18 @@ func GetInteractionUserName(interaction *discordgo.Interaction) string {
 
 	return ""
 }
+
+// CheckApplicationCommandData checks a discordgo.ApplicationCommandInteractionData for the matching name and subsequent option names.
+func CheckApplicationCommandData(command discordgo.ApplicationCommandInteractionData, name string, options ...string) bool {
+	if command.Name != name || len(command.Options) != len(options) {
+		return false
+	}
+
+	for index, option := range options {
+		if command.Options[index].Name != option {
+			return false
+		}
+	}
+
+	return true
+}
