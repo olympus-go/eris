@@ -32,7 +32,7 @@ func main() {
 	bot.AddPlugin(plugins.Quip())
 	bot.AddPlugin(plugins.Stats())
 	bot.AddPlugin(plugins.Spotify(log.Logger))
-	bot.AddPlugin(plugins.RPS(bot.Id(), bot.DiscordSession))
+	bot.AddPlugin(plugins.RPS(log.Logger))
 
 	var i discordgo.Intent
 	i = discordgo.IntentsGuilds
