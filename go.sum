@@ -23,8 +23,8 @@ github.com/mattn/go-isatty v0.0.14 h1:yVuAays6BHfxijgZPzw+3Zlu5yQgKGP2/hcQbHb7S9
 github.com/mattn/go-isatty v0.0.14/go.mod h1:7GGIvUiUoEMVVmxf/4nioHXj79iQHKdU27kJ6hsGG94=
 github.com/miekg/dns v1.1.50 h1:DQUfb9uc6smULcREF09Uc+/Gd46YWqJd5DbpPE9xkcA=
 github.com/miekg/dns v1.1.50/go.mod h1:e3IlAVfNqAllflbibAZEWOXOQ+Ynzk/dDozDxY7XnME=
-github.com/olympus-go/apollo v0.0.0-20220805221326-ae068684927a h1:Ge6TH4UYNiOt+cyp1b5lRjRDrKTVTXQpu8v6ouv3qFs=
-github.com/olympus-go/apollo v0.0.0-20220805221326-ae068684927a/go.mod h1:QMK5rP2EV5Jctpx3uvRzz2Ucsw/zx2qPsAFw+sDGi5Q=
+github.com/olympus-go/apollo v0.0.0-20220807140325-3df7b99dff15 h1:9/9Msfhip3HkBlWYE3evgXZiFvpYKcKgFPZZrXiLba0=
+github.com/olympus-go/apollo v0.0.0-20220807140325-3df7b99dff15/go.mod h1:QMK5rP2EV5Jctpx3uvRzz2Ucsw/zx2qPsAFw+sDGi5Q=
 github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358 h1:CGctBj8d5R7o/8Uh/XDulFndIgSPSwLFy/78j/9FvBQ=
 github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358/go.mod h1:edg2iPy4wr22oqqPOebPwwl2sMlvttxQPxdhdxRSWwA=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

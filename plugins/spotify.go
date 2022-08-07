@@ -21,7 +21,7 @@ type authoredTrack struct {
 }
 
 type SpotifyPlugin struct {
-	player            *spotify.Playerr
+	player            *spotify.Player
 	trackQueue        []authoredTrack
 	framesProcessed   int
 	playChan          chan spotify.Track
@@ -38,7 +38,7 @@ type SpotifyPlugin struct {
 }
 
 func Spotify(logger zerolog.Logger) *SpotifyPlugin {
-	player := spotify.NewPlayerr(spotify.DefaultPlayerConfig())
+	player := spotify.NewPlayer(spotify.DefaultPlayerConfig())
 
 	if err := player.Login(); err != nil {
 		return nil

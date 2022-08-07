@@ -20,7 +20,7 @@ require (
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/miekg/dns v1.1.50 // indirect
-	github.com/olympus-go/apollo v0.0.0-20220805221326-ae068684927a // indirect
+	github.com/olympus-go/apollo v0.0.0-20220807140325-3df7b99dff15 // indirect
 	github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358 // indirect
 	golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e // indirect
 	golang.org/x/mod v0.4.2 // indirect
