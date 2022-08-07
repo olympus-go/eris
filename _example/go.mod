@@ -21,7 +21,7 @@ require (
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/miekg/dns v1.1.50 // indirect
 	github.com/olympus-go/apollo v0.0.0-20220805221326-ae068684927a // indirect
-	github.com/olympus-go/athena v0.0.0-20220805203847-d2cec337d768 // indirect
+	github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358 // indirect
 	golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e // indirect
 	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e // indirect

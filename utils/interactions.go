@@ -1,10 +1,15 @@
 package utils
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"fmt"
+	"github.com/bwmarrin/discordgo"
+	"github.com/rs/zerolog"
+)
 
 type InteractionResponseBuilder struct {
 	session     *discordgo.Session
 	interaction *discordgo.Interaction
+	message     *discordgo.Message
 	response    *discordgo.InteractionResponse
 }
 
@@ -39,28 +44,44 @@ func (i *InteractionResponseBuilder) Components(components ...discordgo.MessageC
 	return i
 }
 
+func (i *InteractionResponseBuilder) Response(response *discordgo.InteractionResponse) *InteractionResponseBuilder {
+	i.response = response
+	return i
+}
+
 func (i *InteractionResponseBuilder) Send() error {
 	return i.session.InteractionRespond(i.interaction, i.response)
 }
 
-func SendInteractionResponse(session *discordgo.Session, interaction *discordgo.Interaction, message string, flags discordgo.MessageFlags) error {
-	return session.InteractionRespond(interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: message,
-		},
-	})
+func (i *InteractionResponseBuilder) SendWithLog(logger zerolog.Logger) {
+	if err := i.Send(); err != nil {
+		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to respond to interaction")
+	}
 }
 
-func SendEphemeralInteractionResponse(session *discordgo.Session, interaction *discordgo.Interaction, message string, components ...discordgo.MessageComponent) error {
-	return session.InteractionRespond(interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    message,
-			Components: components,
-			Flags:      uint64(discordgo.MessageFlagsEphemeral),
-		},
-	})
+func (i *InteractionResponseBuilder) Edit() error {
+	message, err := i.session.InteractionResponse(i.interaction)
+	if message == nil || err != nil {
+		return fmt.Errorf("can't edit unavailable interaction")
+	}
+
+	messageEdit := discordgo.NewMessageEdit(message.ChannelID, message.ID)
+	messageEdit.Content = &i.response.Data.Content
+	messageEdit.Components = i.response.Data.Components
+
+	_, err = i.session.ChannelMessageEditComplex(messageEdit)
+
+	return err
+}
+
+func (i *InteractionResponseBuilder) EditWithLog(logger zerolog.Logger) {
+	if err := i.Edit(); err != nil {
+		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to edit interaction")
+	}
+}
+
+func (i *InteractionResponseBuilder) Delete() error {
+	return i.session.InteractionResponseDelete(i.interaction)
 }
 
 func GetInteractionUserId(interaction *discordgo.Interaction) string {
@@ -105,4 +126,30 @@ func CheckApplicationCommandData(command discordgo.ApplicationCommandInteraction
 	}
 
 	return true
+}
+
+func GetApplicationCommandOption(command discordgo.ApplicationCommandInteractionData, name string, optionName string) (*discordgo.ApplicationCommandInteractionDataOption, bool) {
+	if command.Name != name {
+		return nil, false
+	}
+
+	for _, option := range command.Options {
+		if option.Name == optionName {
+			return option, true
+		}
+	}
+
+	return nil, false
+}
+
+// SendEphemeralInteractionResponse TODO Deprecated
+func SendEphemeralInteractionResponse(session *discordgo.Session, interaction *discordgo.Interaction, message string, components ...discordgo.MessageComponent) error {
+	return session.InteractionRespond(interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content:    message,
+			Components: components,
+			Flags:      uint64(discordgo.MessageFlagsEphemeral),
+		},
+	})
 }

@@ -28,7 +28,7 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create discord session")
 	}
 
-	bot.AddPlugin(plugins.Akinator())
+	bot.AddPlugin(plugins.Akinator(log.Logger))
 	bot.AddPlugin(plugins.Quip())
 	bot.AddPlugin(plugins.Stats())
 	bot.AddPlugin(plugins.Spotify(log.Logger))

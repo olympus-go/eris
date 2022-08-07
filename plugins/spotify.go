@@ -70,18 +70,24 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if applicationCommandData.Name != "spotify" || applicationCommandData.Options[0].Name != "join" {
+
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "join"); !ok {
 				return
 			}
 
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
 			if s.isInVoice {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "I'm already here!")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("I'm already here!").SendWithLog(s.logger)
 				return
 			} else {
 				guild, err := session.State.Guild(i.GuildID)
 				if err != nil {
 					s.logger.Error().Err(err).Msg("failed to fetch guild from id")
-					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong")
+					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+						Message("Something went wrong.").SendWithLog(s.logger)
 					return
 				}
 
@@ -90,7 +96,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 						s.voiceConnection, err = session.ChannelVoiceJoin(guild.ID, voiceState.ChannelID, false, true)
 						if err != nil {
 							s.logger.Error().Err(err).Msg("failed to join voice channel")
-							_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong")
+							utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+								Message("Something went wrong.").SendWithLog(s.logger)
 							return
 						}
 						s.isInVoice = true
@@ -99,7 +106,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 				// The invoking user could not be found in a voice channel
 				if !s.isInVoice {
-					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "You're not in a voice channel")
+					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+						Message("You're not in a voice channel.").SendWithLog(s.logger)
 					return
 				}
 
@@ -110,11 +118,9 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				ctx, s.trackPlayerCancel = context.WithCancel(context.Background())
 				go s.trackPlayer(ctx)
 
-				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
-					Interface("command", applicationCommandData).Msg("user invoked slash command")
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":tada:")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message(":tada:").SendWithLog(s.logger)
 			}
-		default:
 		}
 	}
 
@@ -122,16 +128,23 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if applicationCommandData.Name != "spotify" || applicationCommandData.Options[0].Name != "leave" {
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "leave"); !ok {
 				return
 			}
 
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
 			if !s.isInVoice {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "I'm not in a voice channel.")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("I'm not in a voice channel").SendWithLog(s.logger)
 				return
 			} else {
 				if s.voiceConnection == nil {
 					s.logger.Error().Msg("expected to be in voice channel but connection is nil")
+					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+						Message("Something went wrong.").SendWithLog(s.logger)
+					return
 				}
 
 				s.trackPlayerCancel()
@@ -145,12 +158,9 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				}
 
 				s.isInVoice = false
-				s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
-					Interface("command", applicationCommandData).Msg("user invoked slash command")
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":wave:")
-
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message(":wave:").SendWithLog(s.logger)
 			}
-		default:
 		}
 	}
 
@@ -158,34 +168,41 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if !utils.CheckApplicationCommandData(applicationCommandData, "spotify", "play") {
+			option, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "play")
+			if !ok {
 				return
 			}
 
-			// This shouldn't ever happen, but we don't want to risk going out of bounds on that assumption
-			if len(applicationCommandData.Options) == 0 || len(applicationCommandData.Options[0].Options) == 0 {
-				s.logger.Error().Str("command", "spotify play").Msg("unexpected empty options for command")
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong")
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
+			if len(option.Options) == 0 {
+				s.logger.Error().Interface("command", applicationCommandData).Msg("unexpected empty options for command")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Something went wrong.").SendWithLog(s.logger)
 				return
 			}
 
 			if !s.isInVoice {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Summon me first before playing.")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Summon me first before playing.").SendWithLog(s.logger)
 				return
 			}
 
-			query, _ := applicationCommandData.Options[0].Options[0].Value.(string)
+			query, _ := option.Options[0].Value.(string)
 
 			tracks, err := s.player.Search(query, 5)
 			if err != nil {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Something went wrong")
 				s.logger.Error().Err(err).Msg("spotify search failed")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Something went wrong.").SendWithLog(s.logger)
 				return
 			}
 
 			// No tracks found
 			if len(tracks) == 0 {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "No tracks found")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("No tracks found.").SendWithLog(s.logger)
 				return
 			}
 
@@ -195,20 +212,16 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			if len(uid) > 64 {
 				uid = uid[:64]
 			}
-			if err = utils.SendEphemeralInteractionResponse(session, i.Interaction, message, s.yesNoButtons(uid, true)...); err != nil {
-				s.logger.Debug().Msg("failed to send interaction response")
-				return
-			}
+			utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+				Message(message).Components(s.yesNoButtons(uid, true)...).SendWithLog(s.logger)
+
 			s.playInteractions[uid] = tracks
-			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
-				Interface("command", applicationCommandData).Msg("user invoked slash command")
 
 			go func() {
 				time.Sleep(15 * time.Second)
 				if _, ok := s.playInteractions[uid]; ok {
 					delete(s.playInteractions, uid)
 					s.logger.Debug().Str("uid", uid).Msg("play interaction timed out")
-
 				}
 			}()
 		case discordgo.InteractionMessageComponent:
@@ -217,9 +230,15 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("component", messageComponentData).Msg("user interacted with component")
+
 			idSplit := strings.Split(messageComponentData.CustomID, "_")
 			if len(idSplit) != 4 {
-				s.logger.Error().Str("custom_id", messageComponentData.CustomID).Msg("message interaction response had an unknown custom id")
+				s.logger.Error().Str("custom_id", messageComponentData.CustomID).
+					Msg("message interaction response had an unknown custom id")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Something went wrong.").SendWithLog(s.logger)
 				return
 			}
 
@@ -229,7 +248,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 			// The interaction was already closed out
 			if _, ok := s.playInteractions[uid]; !ok {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "This song list is no longer available. Try searching again.")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("This song list is no longer available. Try searching again.").SendWithLog(s.logger)
 				return
 			}
 
@@ -241,20 +261,27 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 					authorName: utils.GetInteractionUserName(i.Interaction),
 				}
 				s.enqueueTrack(aTrack)
-				message := fmt.Sprintf("%s by %s added to queue.", aTrack.track.Name(), aTrack.track.Artist())
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
-				delete(s.playInteractions, uid)
 				s.logger.Debug().Str("user_id", userId).Interface("track", s.buildTrackObject(aTrack.track)).Msg("user enqueued track")
+
+				message := fmt.Sprintf("%s by %s added to queue.", aTrack.track.Name(), aTrack.track.Artist())
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message(message).SendWithLog(s.logger)
+
+				delete(s.playInteractions, uid)
 			case "no":
+				track := s.playInteractions[uid][0]
+				s.logger.Debug().Str("user_id", userId).Str("track", track.Name()).Msg("user responded no to track query")
+
 				s.playInteractions[uid] = s.playInteractions[uid][1:]
 				if len(s.playInteractions[uid]) == 0 {
-					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "That's all of them! Try searching again.")
+					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+						Message("That's all of them! Try searching again.").SendWithLog(s.logger)
 					return
 				}
-				track := s.playInteractions[uid][0]
+				track = s.playInteractions[uid][0]
 				message := fmt.Sprintf("Is this your song?\n```Name: %s\nArtist: %s\n```%s", track.Name(), track.Artist(), track.Image())
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message, s.yesNoButtons(uid, true)...)
-				s.logger.Debug().Str("user_id", userId).Str("track", track.Name()).Msg("user responded no to track query")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message(message).Components(s.yesNoButtons(uid, true)...).SendWithLog(s.logger)
 			}
 		}
 	}
@@ -263,9 +290,13 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if !utils.CheckApplicationCommandData(applicationCommandData, "spotify", "queue") {
+
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "queue"); !ok {
 				return
 			}
+
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
 
 			message := ""
 			for index, aTrack := range s.trackQueue {
@@ -289,9 +320,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				message = fmt.Sprintf("```%s```", message)
 			}
 
-			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
-				Interface("command", applicationCommandData).Msg("user invoked slash command")
-			_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, message)
+			utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+				Message(message).SendWithLog(s.logger)
 		}
 	}
 
@@ -299,23 +329,30 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if applicationCommandData.Name != "spotify" || applicationCommandData.Options[0].Name != "skip" {
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "skip"); !ok {
 				return
 			}
 
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
 			if !s.isInVoice || !s.isPlaying {
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "Nothing to skip.")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Nothing to skip.").SendWithLog(s.logger)
 				return
 			} else {
 				userId := utils.GetInteractionUserId(i.Interaction)
 				if s.trackQueue[0].authorId != userId {
-					_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "You cannot skip a track you didn't queue.")
-					s.logger.Debug().Str("user_id", userId).Str("author_id", s.trackQueue[0].authorId).Str("track", s.trackQueue[0].track.Name()).Msg("user attempted to skip track")
+					s.logger.Debug().Str("user_id", userId).Str("author_id", s.trackQueue[0].authorId).
+						Interface("track", s.buildTrackObject(s.trackQueue[0].track)).Msg("user attempted to skip track")
+					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+						Message("You cannot skip a track you didn't queue.").SendWithLog(s.logger)
 					return
 				}
 				s.logger.Debug().Str("user_id", userId).Str("track", s.trackQueue[0].track.Name()).Msg("user skipped track")
 				s.skipChan <- true
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, ":gun:")
+				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message(":gun:").SendWithLog(s.logger)
 			}
 		default:
 		}
