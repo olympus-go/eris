@@ -62,7 +62,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				return
 			} else {
 				utils.InteractionResponse(s, i.Interaction).
-					Message("<a:loading:1005279530438623272> Starting game...").SendWithLog(a.logger)
+					Message("<a:loading:1005279530438623272> Loading...").SendWithLog(a.logger)
 
 				var err error
 				a.client, err = athena.NewClient()
@@ -94,6 +94,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					}
 				}
 
+				a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Interface("component", messageComponentData).Msg("user interacted with component")
+
 				utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
 					SendWithLog(a.logger)
 
@@ -118,6 +121,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						Message("Please wait, I'm thinking...").SendWithLog(a.logger)
 					return
 				}
+
+				a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Interface("component", messageComponentData).Msg("user interacted with component")
 
 				utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
 					SendWithLog(a.logger)
@@ -151,10 +157,11 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				utils.InteractionResponse(s, i.Interaction).Message(a.questionStr()).
 					Components(a.questionButtons(true)).EditWithLog(a.logger)
-				a.processing = false
-			}
 
-		default:
+				a.processing = false
+
+				return
+			}
 		}
 	}
 
@@ -212,7 +219,6 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 			}
 
 			return
-
 		}
 	}
 
