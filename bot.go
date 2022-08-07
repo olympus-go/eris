@@ -115,6 +115,10 @@ func (b *Bot) Start() error {
 	return b.DiscordSession.Open()
 }
 
+func (b *Bot) Stop() error {
+	return b.DiscordSession.Close()
+}
+
 func (b *Bot) pluginCommand() *discordgo.ApplicationCommand {
 	return &discordgo.ApplicationCommand{
 		Name:        "plugins",

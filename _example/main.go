@@ -28,15 +28,8 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create discord session")
 	}
 
-	bot.AddPlugin(plugins.Akinator(log.Logger))
-	bot.AddPlugin(plugins.Quip())
 	bot.AddPlugin(plugins.Stats())
-	bot.AddPlugin(plugins.Spotify(log.Logger))
-	bot.AddPlugin(plugins.RPS(log.Logger))
 
-	var i discordgo.Intent
-	i = discordgo.IntentsGuilds
-	i |= discordgo.IntentGuildIntegrations
 	bot.DiscordSession.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages |
 		discordgo.IntentsGuildVoiceStates | discordgo.IntentMessageContent
 
@@ -49,5 +42,7 @@ func main() {
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
 
-	bot.DiscordSession.Close()
+	if err = bot.Stop(); err != nil {
+		log.Fatal().Err(err).Msg("failed to close discord session")
+	}
 }
