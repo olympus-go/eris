@@ -2,6 +2,8 @@
 eris is a go library that wraps [discordgo](https://github.com/bwmarrin/discordgo) with the goal of creating an extensible
 bot framework as well as enabling faster bot development.
 
+This is still in the early stages of production and no promises are made for the stability of any current features.
+
 ## Plugins
 eris defines a `Plugin` interface that can be used to add a whole slew of features to your bot while keeping things
 organized and readable. eris by default will also add a `/plugins` command to your bot that lets users see what cool 
