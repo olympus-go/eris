@@ -113,35 +113,6 @@ func GetInteractionUserName(interaction *discordgo.Interaction) string {
 	return ""
 }
 
-// CheckApplicationCommandData checks a discordgo.ApplicationCommandInteractionData for the matching name and subsequent option names.
-func CheckApplicationCommandData(command discordgo.ApplicationCommandInteractionData, name string, options ...string) bool {
-	if command.Name != name || len(command.Options) != len(options) {
-		return false
-	}
-
-	for index, option := range options {
-		if command.Options[index].Name != option {
-			return false
-		}
-	}
-
-	return true
-}
-
-func GetApplicationCommandOption(command discordgo.ApplicationCommandInteractionData, name string, optionName string) (*discordgo.ApplicationCommandInteractionDataOption, bool) {
-	if command.Name != name {
-		return nil, false
-	}
-
-	for _, option := range command.Options {
-		if option.Name == optionName {
-			return option, true
-		}
-	}
-
-	return nil, false
-}
-
 // SendEphemeralInteractionResponse TODO Deprecated
 func SendEphemeralInteractionResponse(session *discordgo.Session, interaction *discordgo.Interaction, message string, components ...discordgo.MessageComponent) error {
 	return session.InteractionRespond(interaction, &discordgo.InteractionResponse{

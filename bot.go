@@ -68,7 +68,7 @@ func (b *Bot) AddCommand(cmd *discordgo.ApplicationCommand, guildIds ...string) 
 		commandFound = false
 		registeredCommands, _ := b.DiscordSession.ApplicationCommands(b.appId, guildId)
 		for _, registeredCommand := range registeredCommands {
-			if CompareApplicationCommand(*cmd, *registeredCommand) {
+			if utils.CompareApplicationCommand(*cmd, *registeredCommand) {
 				log.Debug().Str("command_name", cmd.Name).Msg("skipping command already registered")
 				commandFound = true
 			}
