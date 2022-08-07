@@ -469,12 +469,14 @@ func (s *SpotifyPlugin) trackPlayer(ctx context.Context) {
 		}
 		s.framesProcessed = 0
 		encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
-		encodedFrames := make(chan []byte, 500)
+		// Create a channel that gives us about 1 minutes of buffer room
+		encodedFrames := make(chan []byte, 3000)
 		go func(encodeSession *dca.EncodeSession, encodedFrames chan<- []byte) {
 			for {
 				frame, err := encodeSession.OpusFrame()
 				if err != nil {
 					close(encodedFrames)
+					s.logger.Debug().Interface("track", s.buildTrackObject(track)).Msg("finished encoding track")
 					return
 				}
 				encodedFrames <- frame
