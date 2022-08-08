@@ -6,6 +6,9 @@ github.com/coreos/go-systemd/v22 v22.3.3-0.20220203105225-a9a7ef127534/go.mod h1
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/eolso/librespot-golang v0.0.0-20220805221148-27a63baed010 h1:UHgDqsTHg+7TaJ4QKipx1sSOkFKo4sXdqD/ZRq5XRVQ=
 github.com/eolso/librespot-golang v0.0.0-20220805221148-27a63baed010/go.mod h1:6UsdvArGdMW2IVDGpUwNy9m6ULQ2vb5FVewxtzxQlfw=
+github.com/eolso/librespot-golang v0.0.0-20220807201633-8b79614061bf/go.mod h1:6UsdvArGdMW2IVDGpUwNy9m6ULQ2vb5FVewxtzxQlfw=
+github.com/eolso/librespot-golang v0.0.0-20220807203348-37e91c845e82/go.mod h1:6UsdvArGdMW2IVDGpUwNy9m6ULQ2vb5FVewxtzxQlfw=
+github.com/eolso/librespot-golang v0.0.0-20220807205828-25a7fab5e593/go.mod h1:tQn+MW5387/vGKP7hHQfu4WPgtW0zDr5DaoxHUcijy0=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/golang/protobuf v1.5.0 h1:LUVKkCeviFUMKqHa4tXIIij/lbhnMbP7Fn5wKdKkRh4=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
@@ -23,10 +26,18 @@ github.com/mattn/go-isatty v0.0.14 h1:yVuAays6BHfxijgZPzw+3Zlu5yQgKGP2/hcQbHb7S9
 github.com/mattn/go-isatty v0.0.14/go.mod h1:7GGIvUiUoEMVVmxf/4nioHXj79iQHKdU27kJ6hsGG94=
 github.com/miekg/dns v1.1.50 h1:DQUfb9uc6smULcREF09Uc+/Gd46YWqJd5DbpPE9xkcA=
 github.com/miekg/dns v1.1.50/go.mod h1:e3IlAVfNqAllflbibAZEWOXOQ+Ynzk/dDozDxY7XnME=
-github.com/olympus-go/apollo v0.0.0-20220807140325-3df7b99dff15 h1:9/9Msfhip3HkBlWYE3evgXZiFvpYKcKgFPZZrXiLba0=
-github.com/olympus-go/apollo v0.0.0-20220807140325-3df7b99dff15/go.mod h1:QMK5rP2EV5Jctpx3uvRzz2Ucsw/zx2qPsAFw+sDGi5Q=
+github.com/olympus-go/apollo v0.0.0-20220807141530-2707d56077f6 h1:AuaPw6t9Ji6MXcvCjegRFYc8bvyBP9qOaZE1FR9xpX8=
+github.com/olympus-go/apollo v0.0.0-20220807141530-2707d56077f6/go.mod h1:QMK5rP2EV5Jctpx3uvRzz2Ucsw/zx2qPsAFw+sDGi5Q=
+github.com/olympus-go/apollo v0.0.0-20220807202331-89d47b1dc81e h1:vmmtACa3+ENMs8TIlziemNXtO7Xr2/+BrcTDdGHYw3U=
+github.com/olympus-go/apollo v0.0.0-20220807202331-89d47b1dc81e/go.mod h1:IGjt8xKu9cxd+nJIwD8PfhOt4T5SC9chyLVRUA8OgGQ=
+github.com/olympus-go/apollo v0.0.0-20220807203502-c806da75314a h1:gZsZ2MYU9No74EtGu63afVkpWABCWEiN/b8q1uT7hj8=
+github.com/olympus-go/apollo v0.0.0-20220807203502-c806da75314a/go.mod h1:Ef7k56YCW0I+jeer61BwAiDlmFdj3YakX5egwcZZ48k=
+github.com/olympus-go/apollo v0.0.0-20220807212505-a4f2b6a9eaaf h1:ytqhFN5jTvcTaGtlvAn6a4Kf1OrSHE+XGBmGrSQPGck=
+github.com/olympus-go/apollo v0.0.0-20220807212505-a4f2b6a9eaaf/go.mod h1:Rngzq237jI3EPE4hSCAI/KMvMd//HxmfLJ0d9xol9NA=
 github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358 h1:CGctBj8d5R7o/8Uh/XDulFndIgSPSwLFy/78j/9FvBQ=
 github.com/olympus-go/athena v0.0.0-20220807010844-952a47b64358/go.mod h1:edg2iPy4wr22oqqPOebPwwl2sMlvttxQPxdhdxRSWwA=
+github.com/olympus-go/athena v0.0.0-20220807212757-e56d6f298ab3 h1:ToczdNIXhqGZTuL27oaHKJNq9nMyzjS1ubQ6STY438Y=
+github.com/olympus-go/athena v0.0.0-20220807212757-e56d6f298ab3/go.mod h1:P1O4Lr2abT7Ecwe16bz5u4fGHpjCKkz6ACzNozNS6ZY=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/rs/xid v1.3.0/go.mod h1:trrq9SKmegXys3aeAKXMUTdJsYXVwGY3RLcfgqegfbg=
@@ -39,6 +50,7 @@ golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8U
 golang.org/x/crypto v0.0.0-20210421170649-83a5a9bb288b/go.mod h1:T9bdIzuCu7OtxOm1hfPfRQxPLYneinmdGuTeoZ9dtd4=
 golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e h1:1SzTfNOXwIS2oWiMF+6qu0OUDKb0dauo6MoDUQyu+yU=
 golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e/go.mod h1:P+XmwS30IXTQdn5tA2iutPOUgjI07+tq3H3K9MVA1s8=
+golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa/go.mod h1:IxCIyHEi3zRg3s0A5j5BB6A9Jmi73HwBIUl50j+osU4=
 golang.org/x/mod v0.4.2 h1:Gz96sIWK3OalVv/I/qNygP42zyoKp3xptRVCWRFEBvo=
 golang.org/x/mod v0.4.2/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
 golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=
@@ -78,6 +90,7 @@ golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1/go.mod h1:I/5z698sn9Ka8T
 google.golang.org/protobuf v1.26.0-rc.1/go.mod h1:jlhhOSvTdKEhbULTjvd4ARK9grFBp09yW+WbY/TyQbw=
 google.golang.org/protobuf v1.27.1 h1:SnqbnDw1V7RiZcXPx5MEeqPv2s79L9i7BJUlG/+RurQ=
 google.golang.org/protobuf v1.27.1/go.mod h1:9q0QmTI4eRPtz6boOQmLYwt+qCgq0jsYwAQnmE0givc=
+google.golang.org/protobuf v1.28.1/go.mod h1:HV8QOd/L58Z+nl8r43ehVNZIU/HEI6OcFqwMG9pJV4I=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=
 gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=

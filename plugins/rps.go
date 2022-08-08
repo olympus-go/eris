@@ -8,54 +8,55 @@ import (
 	"github.com/rs/zerolog/log"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 )
 
+var (
+	rockValue     = "rock"
+	paperValue    = "newspaper"
+	scissorsValue = "scissors"
+)
+
 type rpsGame struct {
-	challenger          string
-	challengee          string
-	challengeeChallenge *discordgo.Message
-	challengerPrompt    *discordgo.Message
-	challengeePrompt    *discordgo.Message
-	challengerSelection string
-	challengeeSelection string
-	challengeChannelId  string
-	startTime           time.Time
+	challenger         rpsUser
+	challenged         rpsUser
+	id                 string
+	challengeChannelId string
+}
+
+type rpsUser struct {
+	id               string
+	challengeMessage *discordgo.Message
+	promptMessage    *discordgo.Message
+	selection        string
 }
 
 type RpsPlugin struct {
-	activeGames   map[string]*rpsGame
-	rockValue     string
-	paperValue    string
-	scissorsValue string
-	winChan       chan string
-	logger        zerolog.Logger
+	activeGames map[string]*rpsGame
+	gameLock    sync.RWMutex
+	winLock     sync.Mutex
+	logger      zerolog.Logger
 }
 
-func RPS(logger zerolog.Logger) RpsPlugin {
+func Rps(logger zerolog.Logger) *RpsPlugin {
 	rand.Seed(time.Now().UnixNano())
 
-	plugin := RpsPlugin{
-		activeGames:   make(map[string]*rpsGame),
-		rockValue:     "rock",
-		paperValue:    "newspaper",
-		scissorsValue: "scissors",
-		winChan:       make(chan string),
-		logger:        logger.With().Str("plugin", "rps").Logger(),
+	return &RpsPlugin{
+		activeGames: make(map[string]*rpsGame),
+		logger:      logger.With().Str("plugin", "rps").Logger(),
 	}
-
-	return plugin
 }
 
-func (r RpsPlugin) Name() string {
+func (r *RpsPlugin) Name() string {
 	return "Rock Paper Scissors"
 }
 
-func (r RpsPlugin) Description() string {
+func (r *RpsPlugin) Description() string {
 	return "Enables challenging your friends to rock paper scissors matches"
 }
 
-func (r RpsPlugin) Handlers() map[string]any {
+func (r *RpsPlugin) Handlers() map[string]any {
 	handlers := make(map[string]any)
 
 	handlers["rps_handler"] = func(session *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -69,10 +70,8 @@ func (r RpsPlugin) Handlers() map[string]any {
 			r.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
 				Interface("command", applicationCommandData).Msg("user invoked slash command")
 
-			go r.winCheckWorker(session)
-
 			challenger := utils.GetInteractionUserId(i.Interaction)
-			challengee, ok := applicationCommandData.Options[0].Value.(string)
+			challenged, ok := applicationCommandData.Options[0].Value.(string)
 			if !ok {
 				r.logger.Error().Msgf("expected value to be string, instead got %T", applicationCommandData.Options[0].Value)
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
@@ -81,89 +80,80 @@ func (r RpsPlugin) Handlers() map[string]any {
 			}
 
 			// Make sure the challenger didn't challenge themselves
-			if challengee == challenger {
+			if challenged == challenger {
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("You can't challenge yourself.").SendWithLog(r.logger)
 				return
 			}
 
-			gameId := r.generateGameId(challenger, challengee)
-			if _, ok = r.activeGames[gameId]; ok {
+			game := newRpsGame(challenger, challenged)
+
+			if _, ok = r.getGame(game.id); ok {
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("Finish your current match first!").SendWithLog(r.logger)
 				return
 			}
 
-			r.activeGames[gameId] = &rpsGame{
-				challenger:          challenger,
-				challengee:          challengee,
-				challengerSelection: "",
-				challengeeSelection: "",
-				challengeChannelId:  "",
-				startTime:           time.Now(),
-			}
-
 			// Set the channelId if the interaction was created in a guild
 			if i.Interaction.GuildID != "" {
-				r.activeGames[gameId].challengeChannelId = i.Interaction.ChannelID
+				game.challengeChannelId = i.Interaction.ChannelID
 			}
 
-			r.logger.Debug().Str("user_id", challenger).Str("target_user_id", challengee).
-				Str("channel_id", r.activeGames[gameId].challengeChannelId).Msg("user invoked rock paper scissors")
+			r.setGame(game)
+			r.logger.Debug().Interface("game", game).Msg("game created")
 
-			if challengee == session.State.User.ID {
-				r.logger.Debug().Str("user_id", challenger).Msg("bot accepted the users challenge")
+			// If the challenged user is the bot running this
+			if challenged == session.State.User.ID {
+				r.logger.Debug().Interface("game", game).Msg("bot accepted the challenge")
 
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("I'll DM you.").SendWithLog(r.logger)
 
-				challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
-				if err != nil {
-					r.logger.Error().Err(err).Str("user_id", r.activeGames[gameId].challenger).
-						Msg("could not create DM with user")
+				if err := game.sendPrompt(session, game.challenger); err != nil {
+					r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenger.id).
+						Msg("failed to send prompt to user")
+					// TODO add a follow up here informing the user things went wrong
+					r.deleteGame(game.id)
 					return
 				}
+				r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).Msg("prompt sent to user")
 
-				r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
-				if err != nil {
-					r.logger.Error().Err(err).Str("user_id", r.activeGames[gameId].challenger).Msg("could not send DM to user")
-					return
-				}
-				r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).Msg("prompt sent to user")
 				move := r.generateMove()
-				r.activeGames[gameId].challengeeSelection = move
-				r.logger.Debug().Str("game_id", gameId).Str("selection", move).Msg("bot made a selection")
+				game.challenged.selection = move
+				r.setGame(game)
+				r.logger.Debug().Interface("game", game).Str("selection", move).Msg("bot made a selection")
 			} else {
-				challengeeUserChannel, err := session.UserChannelCreate(challengee)
-				if err != nil {
-					r.logger.Error().Err(err).Str("user_id", challengee).Msg("could not create DM with user")
-					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
-						Message("Something went wrong.").SendWithLog(r.logger)
-					return
-				}
-
 				message := ""
 				if len(applicationCommandData.Options) > 1 {
 					message, _ = applicationCommandData.Options[1].Value.(string)
 				}
 
-				r.activeGames[gameId].challengeeChallenge, err = session.ChannelMessageSendComplex(challengeeUserChannel.ID, r.generateChallenge(gameId, challenger, message, true))
+				if err := game.sendChallenge(session, message); err != nil {
+					r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenged.id).
+						Msg("failed to send challenge to user")
+					// TODO add a follow up here informing the user things went wrong
+					r.deleteGame(game.id)
+					return
+				}
+
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("Challenge issued.").SendWithLog(r.logger)
-				r.logger.Debug().Str("game_id", gameId).Str("user_id", challengee).Msg("challenge sent to user")
+				r.logger.Debug().Interface("game", game).Str("user_id", game.challenged.id).
+					Msg("challenge sent to user")
 
-				go func() {
-					time.Sleep(30 * time.Second)
-					if _, ok := r.activeGames[gameId]; ok {
-						_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
-						_, _ = session.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-							Content: "Challenge timed out.",
-							Flags:   uint64(discordgo.MessageFlagsEphemeral),
-						})
-						r.logger.Debug().Str("game_id", gameId).Msg("challenge timed out")
-						delete(r.activeGames, gameId)
-					}
-				}()
+				// TODO add timeouts back mebe
+				//go func() {
+				//	time.Sleep(30 * time.Second)
+				//	if _, ok := r.activeGames[gameId]; ok {
+				//		_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
+				//		_, _ = session.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				//			Content: "Challenge timed out.",
+				//			Flags:   uint64(discordgo.MessageFlagsEphemeral),
+				//		})
+				//		r.logger.Debug().Str("game_id", gameId).Msg("challenge timed out")
+				//		delete(r.activeGames, gameId)
+				//	}
+				//}()
 			}
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
@@ -182,7 +172,8 @@ func (r RpsPlugin) Handlers() map[string]any {
 				responseSelection := idSlice[2]
 
 				// Check if the game still exists
-				if _, ok := r.activeGames[gameId]; !ok {
+				game, ok := r.getGame(gameId)
+				if !ok {
 					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 						Message("Game no longer exists.").SendWithLog(r.logger)
 					return
@@ -190,58 +181,57 @@ func (r RpsPlugin) Handlers() map[string]any {
 
 				switch responseSelection {
 				case "accept":
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenged.id).
 						Msg("challenge accepted by user")
 
-					// Generate the prompt for the challengee
-					challengeeUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challengee)
-					if err != nil {
-						r.logger.Error().Err(err).Str("userId", r.activeGames[gameId].challengee).Msg("could not create DM with user")
-						return
-					}
-					if r.activeGames[gameId].challengeePrompt, err = session.ChannelMessageSendComplex(challengeeUserChannel.ID, r.generatePrompt(gameId, true)); err != nil {
-						r.logger.Error().Err(err).Str("channelId", challengeeUserChannel.ID).Msg("failed to send message")
+					// Send the prompt for the challenged user
+					if err := game.sendPrompt(session, game.challenged); err != nil {
+						r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenged.id).
+							Msg("failed to send prompt to user")
+						// TODO add a follow up here informing the user things went wrong. Might also need to inform challenger
+						r.deleteGame(game.id)
 						return
 					}
 
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenged.id).
 						Msg("prompt sent to user")
 
-					// Send the prompt to the challenger
-					challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
-					if err != nil {
-						r.logger.Error().Err(err).Str("userId", r.activeGames[gameId].challenger).Msg("could not create DM with user")
+					// Send the prompt for the challenger user
+					if err := game.sendPrompt(session, game.challenger); err != nil {
+						r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenger.id).
+							Msg("failed to send prompt to user")
+						// TODO add a follow up here informing the user things went wrong. Might also need to inform challenger
+						r.deleteGame(game.id)
 						return
 					}
 
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).
 						Msg("prompt sent to user")
 
-					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
-					r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
+					_ = session.ChannelMessageDelete(game.challenged.challengeMessage.ChannelID, game.challenged.challengeMessage.ID)
+					//r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
 				case "decline":
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).
 						Msg("challenge declined by user")
 
-					challengerUserChannel, err := session.UserChannelCreate(r.activeGames[gameId].challenger)
-					if err != nil {
-						r.logger.Error().Err(err).Str("userId", r.activeGames[gameId].challenger).Msg("could not create DM with user")
+					if err := game.sendMessage(session, game.challenger, game.generateDecline(game.challenged.id)); err != nil {
+						r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenger.id).
+							Msg("failed to send decline to user")
+						// TODO add a follow up here informing the user things went wrong. Might also need to inform challenger
+						r.deleteGame(game.id)
 						return
 					}
 
-					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
-					_, err = session.ChannelMessageSend(challengerUserChannel.ID, r.generateDecline(r.activeGames[gameId].challengee))
-
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).
 						Msg("decline notice sent to user")
 
-					delete(r.activeGames, gameId)
+					r.deleteGame(game.id)
 				default:
-					r.logger.Error().Str("gameId", gameId).Str("value", responseSelection).Msg("challenge response receive unexpected value")
+					r.logger.Error().Interface("game", game).Str("value", responseSelection).
+						Msg("challenge response receive unexpected value")
 					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 						Message("Something went wrong.").SendWithLog(r.logger)
-					_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeeChallenge.ChannelID, r.activeGames[gameId].challengeeChallenge.ID)
-					delete(r.activeGames, gameId)
+					r.deleteGame(game.id)
 					return
 				}
 			} else if strings.HasPrefix(messageComponentData.CustomID, "rps_move") {
@@ -259,37 +249,39 @@ func (r RpsPlugin) Handlers() map[string]any {
 				userId := utils.GetInteractionUserId(i.Interaction)
 
 				// Check if the game still exists
-				if _, ok := r.activeGames[gameId]; !ok {
+				game, ok := r.getGame(gameId)
+				if !ok {
 					utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 						Message("Game no longer exists.").SendWithLog(r.logger)
 					return
 				}
 
 				// Store interaction input in active game
-				if userId == r.activeGames[gameId].challenger {
-					r.activeGames[gameId].challengerSelection = moveSelection
+				if userId == game.challenger.id {
+					game.challenger.selection = moveSelection
+					r.setGame(game)
 
 					// Update the prompt and remove the buttons
-					messageEdit := discordgo.NewMessageEdit(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
+					messageEdit := discordgo.NewMessageEdit(game.challenger.promptMessage.ChannelID, game.challenger.promptMessage.ID)
 					content := fmt.Sprintf("You selected :%s:.", moveSelection)
 					messageEdit.Content = &content
 					messageEdit.Components = []discordgo.MessageComponent{}
 					_, _ = session.ChannelMessageEditComplex(messageEdit)
 
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challenger).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).
 						Str("selection", moveSelection).Msg("user made a selection")
-
-				} else if userId == r.activeGames[gameId].challengee {
-					r.activeGames[gameId].challengeeSelection = moveSelection
+				} else if userId == game.challenged.id {
+					game.challenged.selection = moveSelection
+					r.setGame(game)
 
 					// Update the prompt and remove the buttons
-					messageEdit := discordgo.NewMessageEdit(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
+					messageEdit := discordgo.NewMessageEdit(game.challenged.promptMessage.ChannelID, game.challenged.promptMessage.ID)
 					content := fmt.Sprintf("You selected :%s:.", moveSelection)
 					messageEdit.Content = &content
 					messageEdit.Components = []discordgo.MessageComponent{}
 					_, _ = session.ChannelMessageEditComplex(messageEdit)
 
-					r.logger.Debug().Str("game_id", gameId).Str("user_id", r.activeGames[gameId].challengee).
+					r.logger.Debug().Interface("game", game).Str("user_id", game.challenged.id).
 						Str("selection", moveSelection).Msg("user made a selection")
 				} else {
 					log.Error().Str("gameId", gameId).Str("userId", userId).Msg("user interacted with button not associated with their game")
@@ -302,7 +294,7 @@ func (r RpsPlugin) Handlers() map[string]any {
 				utils.InteractionResponse(session, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
 					SendWithLog(r.logger)
 
-				r.winChan <- gameId
+				r.winCheck(session, game)
 			}
 		}
 	}
@@ -310,7 +302,7 @@ func (r RpsPlugin) Handlers() map[string]any {
 	return handlers
 }
 
-func (r RpsPlugin) Commands() map[string]*discordgo.ApplicationCommand {
+func (r *RpsPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
 	commands["rps_cmd"] = &discordgo.ApplicationCommand{
@@ -335,62 +327,142 @@ func (r RpsPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	return commands
 }
 
-func (r RpsPlugin) Intents() []discordgo.Intent {
+func (r *RpsPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
-func (r RpsPlugin) challengeUser() {
+func (r *RpsPlugin) getGame(id string) (*rpsGame, bool) {
+	r.gameLock.RLock()
+	defer r.gameLock.RUnlock()
 
+	game, ok := r.activeGames[id]
+	return game, ok
 }
 
-func (r RpsPlugin) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend {
-	options := []string{
-		"Choose wisely:",
-		"Make your move:",
-		"Ooooo get 'em:",
-		"No pressure:",
-		"Believe in the heart of your fingers:",
-		"Look, if you had one shot or one opportunity\nTo seize everything you ever wanted in one moment\nWould you capture it, or just let it slip? Yo:",
-		"Don't mess this up:",
-		"おまえはもうしんでいる:",
-		"I believe in you:",
-		"Whatever you do don't choose rock:",
-		"Whatever you do don't choose paper:",
-		"Whatever you do don't choose scissors:",
+func (r *RpsPlugin) setGame(game *rpsGame) {
+	r.gameLock.Lock()
+	r.activeGames[game.id] = game
+	r.gameLock.Unlock()
+}
+
+func (r *RpsPlugin) deleteGame(gameId string) {
+	r.gameLock.Lock()
+	if _, ok := r.activeGames[gameId]; ok {
+		delete(r.activeGames, gameId)
+	}
+	r.gameLock.Unlock()
+}
+
+func (r *RpsPlugin) generateMove() string {
+	return []string{rockValue, paperValue, scissorsValue}[rand.Int()%3]
+}
+
+func (r *RpsPlugin) moveCmp(m1, m2 string) int {
+	switch m1 {
+	case "":
+		if m2 == "" {
+			return 0
+		} else {
+			return 1
+		}
+	case rockValue:
+		if m2 == rockValue {
+			return 0
+		} else if m2 == paperValue {
+			return 1
+		} else {
+			return -1
+		}
+	case paperValue:
+		if m2 == paperValue {
+			return 0
+		} else if m2 == scissorsValue {
+			return 1
+		} else {
+			return -1
+		}
+	case scissorsValue:
+		if m2 == scissorsValue {
+			return 0
+		} else if m2 == rockValue {
+			return 1
+		} else {
+			return -1
+		}
 	}
 
-	response := discordgo.MessageSend{
-		Content: options[rand.Int()%len(options)],
-		Components: []discordgo.MessageComponent{
-			discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{
-					discordgo.Button{
-						Label:    "Rock",
-						Style:    discordgo.PrimaryButton,
-						CustomID: fmt.Sprintf("rps_move_%s_%s", r.rockValue, gameId),
-						Disabled: !enabled,
-					},
-					discordgo.Button{
-						Label:    "Paper",
-						Style:    discordgo.PrimaryButton,
-						CustomID: fmt.Sprintf("rps_move_%s_%s", r.paperValue, gameId),
-						Disabled: !enabled,
-					},
-					discordgo.Button{
-						Label:    "Scissors",
-						Style:    discordgo.PrimaryButton,
-						CustomID: fmt.Sprintf("rps_move_%s_%s", r.scissorsValue, gameId),
-						Disabled: !enabled,
-					},
-				},
-			},
+	return 0
+}
+
+func (r *RpsPlugin) winCheck(session *discordgo.Session, game *rpsGame) {
+	if session == nil || game == nil {
+		return
+	}
+
+	r.winLock.Lock()
+	defer r.winLock.Unlock()
+
+	// Game already concluded
+	if _, ok := r.getGame(game.id); !ok {
+		return
+	}
+
+	// Game not over yet
+	if game.challenger.selection == "" || game.challenged.selection == "" {
+		return
+	}
+
+	winnerMessage := fmt.Sprintf("<@%s> :%s:  :vs:  :%s: <@%s>\n", game.challenger.id, game.challenger.selection,
+		game.challenged.selection, game.challenged.id)
+
+	switch r.moveCmp(game.challenger.selection, game.challenged.selection) {
+	case -1:
+		winnerMessage += fmt.Sprintf("<@%s> wins!", game.challenger.id)
+	case 0:
+		winnerMessage += fmt.Sprintf("It's a tie!")
+	case 1:
+		winnerMessage += fmt.Sprintf("<@%s> wins!", game.challenged.id)
+	}
+
+	// If the game was launched in a channel, report the results back in the channel. Otherwise DM both
+	// users.
+	if game.challengeChannelId != "" {
+		_, _ = session.ChannelMessageSend(game.challengeChannelId, winnerMessage)
+	} else {
+		// Send results to challenger
+		challengerUserChannel, _ := session.UserChannelCreate(game.challenger.id)
+		_, _ = session.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
+
+		// Send results to challengee (if not the bot itself)
+		if game.challenged.id != session.State.User.ID {
+			challengeeUserChannel, _ := session.UserChannelCreate(game.challenged.id)
+			_, _ = session.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
+		}
+	}
+
+	// Cleanup the old messages
+	_ = session.ChannelMessageDelete(game.challenger.promptMessage.ChannelID, game.challenger.promptMessage.ID)
+	if game.challenged.id != session.State.User.ID {
+		_ = session.ChannelMessageDelete(game.challenged.promptMessage.ChannelID, game.challenged.promptMessage.ID)
+	}
+
+	// Close out the game
+	r.deleteGame(game.id)
+}
+
+func newRpsGame(challengerId string, challengedId string) *rpsGame {
+	return &rpsGame{
+		challenger: rpsUser{
+			id: challengerId,
 		},
+		challenged: rpsUser{
+			id: challengedId,
+		},
+		id: fmt.Sprintf("%svs%s", challengerId, challengedId),
 	}
-
-	return &response
 }
 
-func (r RpsPlugin) generateChallenge(gameId string, challenger string, message string, enabled bool) *discordgo.MessageSend {
+func (r *rpsGame) generateChallenge(gameId string, challenger string, message string, enabled bool) *discordgo.MessageSend {
 	challengeString := fmt.Sprintf("<@%s> challenged you to rock paper scissors.", challenger)
 	if message != "" {
 		challengeString += fmt.Sprintf("\n\n They also wanted to say: %s", message)
@@ -421,7 +493,54 @@ func (r RpsPlugin) generateChallenge(gameId string, challenger string, message s
 	return &responseData
 }
 
-func (r RpsPlugin) generateDecline(userId string) string {
+func (r *rpsGame) generatePrompt(gameId string, enabled bool) *discordgo.MessageSend {
+	options := []string{
+		"Choose wisely:",
+		"Make your move:",
+		"Ooooo get 'em:",
+		"No pressure:",
+		"Believe in the heart of your fingers:",
+		"Look, if you had one shot or one opportunity\nTo seize everything you ever wanted in one moment\nWould you capture it, or just let it slip? Yo:",
+		"Don't mess this up:",
+		"おまえはもうしんでいる:",
+		"I believe in you:",
+		"Whatever you do don't choose rock:",
+		"Whatever you do don't choose paper:",
+		"Whatever you do don't choose scissors:",
+	}
+
+	response := discordgo.MessageSend{
+		Content: options[rand.Int()%len(options)],
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Rock",
+						Style:    discordgo.PrimaryButton,
+						CustomID: fmt.Sprintf("rps_move_%s_%s", rockValue, gameId),
+						Disabled: !enabled,
+					},
+					discordgo.Button{
+						Label:    "Paper",
+						Style:    discordgo.PrimaryButton,
+						CustomID: fmt.Sprintf("rps_move_%s_%s", paperValue, gameId),
+						Disabled: !enabled,
+					},
+					discordgo.Button{
+						Label:    "Scissors",
+						Style:    discordgo.PrimaryButton,
+						CustomID: fmt.Sprintf("rps_move_%s_%s", scissorsValue, gameId),
+						Disabled: !enabled,
+					},
+				},
+			},
+		},
+	}
+
+	return &response
+}
+
+func (r *rpsGame) generateDecline(userId string) *discordgo.MessageSend {
 	options := []string{
 		fmt.Sprintf("<@%s> declined.", userId),
 		fmt.Sprintf("<@%s> said fuck off.", userId),
@@ -433,100 +552,65 @@ func (r RpsPlugin) generateDecline(userId string) string {
 		fmt.Sprintf("<@%s> thinks you smell.", userId),
 	}
 
-	return options[rand.Int()%len(options)]
+	return &discordgo.MessageSend{
+		Content: options[rand.Int()%len(options)],
+	}
 }
 
-func (r RpsPlugin) generateMove() string {
-	return []string{r.rockValue, r.paperValue, r.scissorsValue}[rand.Int()%3]
-}
-
-func (r RpsPlugin) generateGameId(challenger, challengee string) string {
-	return fmt.Sprintf("%svs%s", challenger, challengee)
-}
-
-func (r RpsPlugin) moveCmp(m1, m2 string) int {
-	switch m1 {
-	case "":
-		if m2 == "" {
-			return 0
-		} else {
-			return 1
-		}
-	case r.rockValue:
-		if m2 == r.rockValue {
-			return 0
-		} else if m2 == r.paperValue {
-			return 1
-		} else {
-			return -1
-		}
-	case r.paperValue:
-		if m2 == r.paperValue {
-			return 0
-		} else if m2 == r.scissorsValue {
-			return 1
-		} else {
-			return -1
-		}
-	case r.scissorsValue:
-		if m2 == r.scissorsValue {
-			return 0
-		} else if m2 == r.rockValue {
-			return 1
-		} else {
-			return -1
-		}
+func (r *rpsGame) sendChallenge(session *discordgo.Session, message string) error {
+	channel, err := session.UserChannelCreate(r.challenged.id)
+	if err != nil {
+		return err
 	}
 
-	return 0
+	challengeMessage := r.generateChallenge(r.id, r.challenger.id, message, true)
+	r.challenged.challengeMessage, err = session.ChannelMessageSendComplex(channel.ID, challengeMessage)
+
+	return err
 }
 
-func (r RpsPlugin) winCheckWorker(session *discordgo.Session) {
-	for gameId := range r.winChan {
-		if _, ok := r.activeGames[gameId]; !ok {
-			log.Debug().Str("game_id", gameId).Msg("game already processed")
-			continue
-		}
-
-		// Check if match is over
-		if r.activeGames[gameId].challengerSelection != "" && r.activeGames[gameId].challengeeSelection != "" {
-			winnerMessage := fmt.Sprintf("<@%s> :%s:  :vs:  :%s: <@%s>\n",
-				r.activeGames[gameId].challenger, r.activeGames[gameId].challengerSelection,
-				r.activeGames[gameId].challengeeSelection, r.activeGames[gameId].challengee)
-
-			switch r.moveCmp(r.activeGames[gameId].challengerSelection, r.activeGames[gameId].challengeeSelection) {
-			case -1:
-				winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challenger)
-			case 0:
-				winnerMessage += fmt.Sprintf("It's a tie!")
-			case 1:
-				winnerMessage += fmt.Sprintf("<@%s> wins!", r.activeGames[gameId].challengee)
-			}
-
-			// If the game was launched in a channel, report the results back in the channel. Otherwise DM both
-			// users.
-			if r.activeGames[gameId].challengeChannelId != "" {
-				_, _ = session.ChannelMessageSend(r.activeGames[gameId].challengeChannelId, winnerMessage)
-			} else {
-				// Send results to challenger
-				challengerUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challenger)
-				_, _ = session.ChannelMessageSend(challengerUserChannel.ID, winnerMessage)
-
-				// Send results to challengee (if not the bot itself)
-				if r.activeGames[gameId].challengee != session.State.User.ID {
-					challengeeUserChannel, _ := session.UserChannelCreate(r.activeGames[gameId].challengee)
-					_, _ = session.ChannelMessageSend(challengeeUserChannel.ID, winnerMessage)
-				}
-			}
-
-			// Cleanup the old messages
-			_ = session.ChannelMessageDelete(r.activeGames[gameId].challengerPrompt.ChannelID, r.activeGames[gameId].challengerPrompt.ID)
-			if r.activeGames[gameId].challengee != session.State.User.ID {
-				_ = session.ChannelMessageDelete(r.activeGames[gameId].challengeePrompt.ChannelID, r.activeGames[gameId].challengeePrompt.ID)
-			}
-
-			// Close out the game
-			delete(r.activeGames, gameId)
-		}
+func (r *rpsGame) sendPrompt(session *discordgo.Session, user rpsUser) error {
+	channel, err := session.UserChannelCreate(user.id)
+	if err != nil {
+		return err
 	}
+
+	promptMessage := r.generatePrompt(r.id, true)
+
+	message, err := session.ChannelMessageSendComplex(channel.ID, promptMessage)
+	if err != nil {
+		return err
+	}
+
+	if user.id == r.challenger.id {
+		r.challenger.promptMessage = message
+	} else if user.id == r.challenged.id {
+		r.challenged.promptMessage = message
+	} else {
+		return fmt.Errorf("invalid user for this game")
+	}
+
+	return nil
+}
+
+func (r *rpsGame) sendMessage(session *discordgo.Session, user rpsUser, messageSend *discordgo.MessageSend) error {
+	channel, err := session.UserChannelCreate(user.id)
+	if err != nil {
+		return err
+	}
+
+	message, err := session.ChannelMessageSendComplex(channel.ID, messageSend)
+	if err != nil {
+		return err
+	}
+
+	if user.id == r.challenger.id {
+		r.challenger.promptMessage = message
+	} else if user.id == r.challenged.id {
+		r.challenged.promptMessage = message
+	} else {
+		return fmt.Errorf("invalid user for this game")
+	}
+
+	return nil
 }

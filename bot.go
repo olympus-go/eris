@@ -37,7 +37,7 @@ func NewBot(token string, appId string) (*Bot, error) {
 		}
 	}()
 
-	bot.AddCommand(bot.pluginCommand(), "158727419941879818")
+	bot.AddCommand(bot.pluginCommand())
 	bot.AddHandler("eris_plugins", bot.pluginHandler())
 
 	return &bot, nil
