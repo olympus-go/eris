@@ -109,7 +109,7 @@ func (r *RpsPlugin) Handlers() map[string]any {
 				utils.InteractionResponse(session, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("I'll DM you.").SendWithLog(r.logger)
 
-				if err := game.sendPrompt(session, game.challenger); err != nil {
+				if err := game.sendMessage(session, game.challenger, game.generatePrompt(game.id, true)); err != nil {
 					r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenger.id).
 						Msg("failed to send prompt to user")
 					// TODO add a follow up here informing the user things went wrong
@@ -128,7 +128,8 @@ func (r *RpsPlugin) Handlers() map[string]any {
 					message, _ = applicationCommandData.Options[1].Value.(string)
 				}
 
-				if err := game.sendChallenge(session, message); err != nil {
+				challengeMessage := game.generateChallenge(game.id, game.challenger.id, message, true)
+				if err := game.sendMessage(session, game.challenged, challengeMessage); err != nil {
 					r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenged.id).
 						Msg("failed to send challenge to user")
 					// TODO add a follow up here informing the user things went wrong
@@ -185,7 +186,7 @@ func (r *RpsPlugin) Handlers() map[string]any {
 						Msg("challenge accepted by user")
 
 					// Send the prompt for the challenged user
-					if err := game.sendPrompt(session, game.challenged); err != nil {
+					if err := game.sendMessage(session, game.challenged, game.generatePrompt(game.id, true)); err != nil {
 						r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenged.id).
 							Msg("failed to send prompt to user")
 						// TODO add a follow up here informing the user things went wrong. Might also need to inform challenger
@@ -197,7 +198,7 @@ func (r *RpsPlugin) Handlers() map[string]any {
 						Msg("prompt sent to user")
 
 					// Send the prompt for the challenger user
-					if err := game.sendPrompt(session, game.challenger); err != nil {
+					if err := game.sendMessage(session, game.challenger, game.generatePrompt(game.id, true)); err != nil {
 						r.logger.Error().Err(err).Interface("game", game).Str("user_id", game.challenger.id).
 							Msg("failed to send prompt to user")
 						// TODO add a follow up here informing the user things went wrong. Might also need to inform challenger
@@ -209,7 +210,6 @@ func (r *RpsPlugin) Handlers() map[string]any {
 						Msg("prompt sent to user")
 
 					_ = session.ChannelMessageDelete(game.challenged.challengeMessage.ChannelID, game.challenged.challengeMessage.ID)
-					//r.activeGames[gameId].challengerPrompt, err = session.ChannelMessageSendComplex(challengerUserChannel.ID, r.generatePrompt(gameId, true))
 				case "decline":
 					r.logger.Debug().Interface("game", game).Str("user_id", game.challenger.id).
 						Msg("challenge declined by user")
@@ -555,42 +555,6 @@ func (r *rpsGame) generateDecline(userId string) *discordgo.MessageSend {
 	return &discordgo.MessageSend{
 		Content: options[rand.Int()%len(options)],
 	}
-}
-
-func (r *rpsGame) sendChallenge(session *discordgo.Session, message string) error {
-	channel, err := session.UserChannelCreate(r.challenged.id)
-	if err != nil {
-		return err
-	}
-
-	challengeMessage := r.generateChallenge(r.id, r.challenger.id, message, true)
-	r.challenged.challengeMessage, err = session.ChannelMessageSendComplex(channel.ID, challengeMessage)
-
-	return err
-}
-
-func (r *rpsGame) sendPrompt(session *discordgo.Session, user rpsUser) error {
-	channel, err := session.UserChannelCreate(user.id)
-	if err != nil {
-		return err
-	}
-
-	promptMessage := r.generatePrompt(r.id, true)
-
-	message, err := session.ChannelMessageSendComplex(channel.ID, promptMessage)
-	if err != nil {
-		return err
-	}
-
-	if user.id == r.challenger.id {
-		r.challenger.promptMessage = message
-	} else if user.id == r.challenged.id {
-		r.challenged.promptMessage = message
-	} else {
-		return fmt.Errorf("invalid user for this game")
-	}
-
-	return nil
 }
 
 func (r *rpsGame) sendMessage(session *discordgo.Session, user rpsUser, messageSend *discordgo.MessageSend) error {
