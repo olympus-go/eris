@@ -39,6 +39,11 @@ func (i *InteractionResponseBuilder) Flags(flags discordgo.MessageFlags) *Intera
 	return i
 }
 
+// Ephemeral is a convenience function that calls Flags(discordgo.MessageFlagsEphemeral).
+func (i *InteractionResponseBuilder) Ephemeral() *InteractionResponseBuilder {
+	return i.Flags(discordgo.MessageFlagsEphemeral)
+}
+
 func (i *InteractionResponseBuilder) Components(components ...discordgo.MessageComponent) *InteractionResponseBuilder {
 	i.response.Data.Components = components
 	return i
