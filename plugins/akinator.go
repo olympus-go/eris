@@ -213,6 +213,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					Message("No game is currently running.").Send()
 			} else {
 				a.client = nil
+				a.processing = false
 				a.gameOwnerId = ""
 				_ = utils.InteractionResponse(s, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message(":wave:").Send()
@@ -244,7 +245,7 @@ func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 			},
 			{
 				Name:        "history",
-				Description: "Prints the current running game's selection history",
+				Description: "Prints the current running game's Selection history",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 		},
