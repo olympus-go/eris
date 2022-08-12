@@ -160,12 +160,14 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				}
 
 				switch gameSession.state {
-				case akiStateAnswerSelection:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
-						SendWithLog(a.logger)
-					return
+				case akiStateThemeSelection:
+					break
 				case akiStateProcessing:
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
+						SendWithLog(a.logger)
+					return
+				default:
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
 						SendWithLog(a.logger)
 					return
 				}
@@ -228,12 +230,14 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				}
 
 				switch gameSession.state {
-				case akiStateThemeSelection:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
-						SendWithLog(a.logger)
-					return
+				case akiStateAnswerSelection:
+					break
 				case akiStateProcessing:
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
+						SendWithLog(a.logger)
+					return
+				default:
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
 						SendWithLog(a.logger)
 					return
 				}
