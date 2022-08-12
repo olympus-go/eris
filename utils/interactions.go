@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/rs/zerolog"
 )
@@ -64,17 +63,30 @@ func (i *InteractionResponseBuilder) SendWithLog(logger zerolog.Logger) {
 	}
 }
 
-func (i *InteractionResponseBuilder) Edit() error {
-	message, err := i.session.InteractionResponse(i.interaction)
-	if message == nil || err != nil {
-		return fmt.Errorf("can't edit unavailable interaction")
+func (i *InteractionResponseBuilder) FollowUp() error {
+	webhookParams := &discordgo.WebhookParams{
+		Content:    i.response.Data.Content,
+		Components: i.response.Data.Components,
+		Flags:      i.response.Data.Flags,
 	}
 
-	messageEdit := discordgo.NewMessageEdit(message.ChannelID, message.ID)
-	messageEdit.Content = &i.response.Data.Content
-	messageEdit.Components = i.response.Data.Components
+	_, err := i.session.FollowupMessageCreate(i.interaction, false, webhookParams)
+	return err
+}
 
-	_, err = i.session.ChannelMessageEditComplex(messageEdit)
+func (i *InteractionResponseBuilder) FollowUpWithLog(logger zerolog.Logger) {
+	if err := i.FollowUp(); err != nil {
+		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to send followup to interaction")
+	}
+}
+
+func (i *InteractionResponseBuilder) Edit() error {
+	webhookEdit := &discordgo.WebhookEdit{
+		Content:    i.response.Data.Content,
+		Components: i.response.Data.Components,
+	}
+
+	_, err := i.session.InteractionResponseEdit(i.interaction, webhookEdit)
 
 	return err
 }
@@ -87,6 +99,12 @@ func (i *InteractionResponseBuilder) EditWithLog(logger zerolog.Logger) {
 
 func (i *InteractionResponseBuilder) Delete() error {
 	return i.session.InteractionResponseDelete(i.interaction)
+}
+
+func (i *InteractionResponseBuilder) DeleteWithLog(logger zerolog.Logger) {
+	if err := i.Delete(); err != nil {
+		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to delete interaction")
+	}
 }
 
 func GetInteractionUserId(interaction *discordgo.Interaction) string {
