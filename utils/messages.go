@@ -2,12 +2,46 @@ package utils
 
 import "github.com/bwmarrin/discordgo"
 
+type MessageEmbedBuilder struct {
+	messageEmbed *discordgo.MessageEmbed
+}
+
 type ButtonBuilder struct {
 	button discordgo.Button
 }
 
 type ActionsRowBuilder struct {
 	messageComponents []discordgo.MessageComponent
+}
+
+func MessageEmbed() *MessageEmbedBuilder {
+	return &MessageEmbedBuilder{
+		messageEmbed: &discordgo.MessageEmbed{},
+	}
+}
+
+func (m *MessageEmbedBuilder) URL(url string) *MessageEmbedBuilder {
+	m.messageEmbed.URL = url
+	return m
+}
+
+func (m *MessageEmbedBuilder) Title(title string) *MessageEmbedBuilder {
+	m.messageEmbed.Title = title
+	return m
+}
+
+func (m *MessageEmbedBuilder) Description(description string) *MessageEmbedBuilder {
+	m.messageEmbed.Description = description
+	return m
+}
+
+func (m *MessageEmbedBuilder) Image(url string) *MessageEmbedBuilder {
+	m.messageEmbed.Image = &discordgo.MessageEmbedImage{URL: url}
+	return m
+}
+
+func (m *MessageEmbedBuilder) Build() *discordgo.MessageEmbed {
+	return m.messageEmbed
 }
 
 func Button() *ButtonBuilder {
