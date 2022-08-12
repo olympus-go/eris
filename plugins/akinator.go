@@ -266,7 +266,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					utils.InteractionResponse(s, i.Interaction).Components(gameSession.questionButtons(false)).
 						EditWithLog(a.logger)
 
-					gameSession.state = akiStateGuessSelection
+					gameSession.state = akiStateProcessing
 					guessResponse, err := gameSession.client.ListGuesses()
 					if err != nil {
 						a.logger.Error().Err(err).Msg("failed to fetch guesses")
@@ -281,7 +281,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					if len(guesses) == 0 {
 						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").
 							EditWithLog(a.logger)
-						a.deleteSession(ownerId)
+						a.deleteSession(s, ownerId)
 						return
 					}
 
@@ -293,7 +293,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						a.logger.Error().Err(err).Msg("failed to send guess as followup message")
 						utils.InteractionResponse(s, i.Interaction).Components().
 							Message("Something went wrong.").SendWithLog(a.logger)
-						a.deleteSession(ownerId)
+						a.deleteSession(s, ownerId)
 						return
 					}
 
@@ -358,7 +358,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					_, _ = utils.InteractionResponse(s, gameSession.interaction).Components().
 						FollowUpEdit(gameSession.guessMessageId)
 					utils.InteractionResponse(s, i.Interaction).Message(":tada:").SendWithLog(a.logger)
-					a.deleteSession(ownerId)
+					a.deleteSession(s, ownerId)
 				} else if selection == "no" {
 					utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
 						SendWithLog(a.logger)
@@ -367,10 +367,11 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						log.Error().Err(err).Str("message_id", gameSession.guessMessageId).
 							Msg("failed to delete follow up message")
 					}
+					gameSession.guessMessageId = ""
 					if gameSession.currentGuesses >= gameSession.maxGuesses {
 						utils.InteractionResponse(s, gameSession.interaction).Components().
 							Message("I give up. You win :disappointed:").EditWithLog(a.logger)
-						a.deleteSession(ownerId)
+						a.deleteSession(s, ownerId)
 					} else {
 						_ = gameSession.client.Undo()
 						gameSession.guessCooldown = 3
@@ -442,7 +443,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				return
 			}
 
-			a.deleteSession(userId)
+			a.deleteSession(s, userId)
 			utils.InteractionResponse(s, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 				Message(":wave:").SendWithLog(a.logger)
 
@@ -525,8 +526,14 @@ func (a *AkinatorPlugin) themeButtons(userId string, enabled bool) discordgo.Act
 	return actionRowBuilder.Build()
 }
 
-func (a *AkinatorPlugin) deleteSession(id string) {
-	if _, ok := a.sessions.Get(id); ok {
+func (a *AkinatorPlugin) deleteSession(session *discordgo.Session, id string) {
+	if gameSession, ok := a.sessions.Get(id); ok {
+		if gameSession.interaction != nil {
+			utils.InteractionResponse(session, gameSession.interaction).DeleteWithLog(a.logger)
+			if gameSession.guessMessageId != "" {
+				_ = utils.InteractionResponse(session, gameSession.interaction).FollowUpDelete(gameSession.guessMessageId)
+			}
+		}
 		a.sessions.Delete(id)
 	}
 }
