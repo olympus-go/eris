@@ -4,9 +4,10 @@ go 1.19
 
 require (
 	github.com/bwmarrin/discordgo v0.25.0
+	github.com/eolso/threadsafe v0.0.0-20220426062731-233f2996097c
 	github.com/jonas747/dca v0.0.0-20210930103944-155f5e5f0cc7
 	github.com/olympus-go/apollo v0.0.0-20220807212505-a4f2b6a9eaaf
-	github.com/olympus-go/athena v0.0.0-20220807212757-e56d6f298ab3
+	github.com/olympus-go/athena v0.0.0-20220811054341-853022d62a02
 	github.com/rs/zerolog v1.27.0
 )
 
@@ -26,5 +27,4 @@ require (
 	golang.org/x/tools v0.1.7 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
