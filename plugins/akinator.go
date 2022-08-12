@@ -19,6 +19,7 @@ const (
 	akiStateAnswerSelection = 2
 	akiStateGuessSelection  = 3
 	akiStateProcessing      = 4
+	akiStateWin             = 5
 )
 
 type akinatorSession struct {
@@ -358,6 +359,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					_, _ = utils.InteractionResponse(s, gameSession.interaction).Components().
 						FollowUpEdit(gameSession.guessMessageId)
 					utils.InteractionResponse(s, i.Interaction).Message(":tada:").SendWithLog(a.logger)
+					gameSession.state = akiStateWin
 					a.deleteSession(s, ownerId)
 				} else if selection == "no" {
 					utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
@@ -457,6 +459,10 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
+	minQuestions := float64(1)
+	maxQuestions := float64(99)
+	minConfidence := float64(1)
+	maxConfidence := 99.0
 	minGuess := float64(1)
 	maxGuess := float64(5)
 
@@ -474,12 +480,16 @@ func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 						Description: "Limit the number of questions asked before guessing (default = 21)",
 						Type:        discordgo.ApplicationCommandOptionInteger,
 						Required:    false,
+						MinValue:    &minQuestions,
+						MaxValue:    maxQuestions,
 					},
 					{
 						Name:        "confidence",
 						Description: "Set the confidence threshold needed before guessing (default = 85.0)",
 						Type:        discordgo.ApplicationCommandOptionNumber,
 						Required:    false,
+						MinValue:    &minConfidence,
+						MaxValue:    maxConfidence,
 					},
 					{
 						Name:        "guesses",
@@ -530,7 +540,7 @@ func (a *AkinatorPlugin) deleteSession(session *discordgo.Session, id string) {
 	if gameSession, ok := a.sessions.Get(id); ok {
 		if gameSession.interaction != nil {
 			utils.InteractionResponse(session, gameSession.interaction).DeleteWithLog(a.logger)
-			if gameSession.guessMessageId != "" {
+			if gameSession.guessMessageId != "" && gameSession.state != akiStateWin {
 				_ = utils.InteractionResponse(session, gameSession.interaction).FollowUpDelete(gameSession.guessMessageId)
 			}
 		}
