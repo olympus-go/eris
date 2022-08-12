@@ -44,7 +44,20 @@ func (i *InteractionResponseBuilder) Ephemeral() *InteractionResponseBuilder {
 }
 
 func (i *InteractionResponseBuilder) Components(components ...discordgo.MessageComponent) *InteractionResponseBuilder {
-	i.response.Data.Components = components
+	if len(components) == 0 {
+		i.response.Data.Components = []discordgo.MessageComponent{}
+	} else {
+		i.response.Data.Components = components
+	}
+	return i
+}
+
+func (i *InteractionResponseBuilder) Embeds(embeds ...*discordgo.MessageEmbed) *InteractionResponseBuilder {
+	if len(embeds) == 0 {
+		i.response.Data.Embeds = nil
+	} else {
+		i.response.Data.Embeds = embeds
+	}
 	return i
 }
 
@@ -63,26 +76,35 @@ func (i *InteractionResponseBuilder) SendWithLog(logger zerolog.Logger) {
 	}
 }
 
-func (i *InteractionResponseBuilder) FollowUp() error {
+func (i *InteractionResponseBuilder) FollowUpCreate() (*discordgo.Message, error) {
 	webhookParams := &discordgo.WebhookParams{
 		Content:    i.response.Data.Content,
 		Components: i.response.Data.Components,
+		Embeds:     i.response.Data.Embeds,
 		Flags:      i.response.Data.Flags,
 	}
 
-	_, err := i.session.FollowupMessageCreate(i.interaction, false, webhookParams)
-	return err
+	return i.session.FollowupMessageCreate(i.interaction, true, webhookParams)
 }
 
-func (i *InteractionResponseBuilder) FollowUpWithLog(logger zerolog.Logger) {
-	if err := i.FollowUp(); err != nil {
-		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to send followup to interaction")
+func (i *InteractionResponseBuilder) FollowUpEdit(id string) (*discordgo.Message, error) {
+	webhookParams := &discordgo.WebhookEdit{
+		Content:    i.response.Data.Content,
+		Components: i.response.Data.Components,
+		Embeds:     i.response.Data.Embeds,
 	}
+
+	return i.session.FollowupMessageEdit(i.interaction, id, webhookParams)
+}
+
+func (i *InteractionResponseBuilder) FollowUpDelete(id string) error {
+	return i.session.FollowupMessageDelete(i.interaction, id)
 }
 
 func (i *InteractionResponseBuilder) Edit() error {
 	webhookEdit := &discordgo.WebhookEdit{
 		Content:    i.response.Data.Content,
+		Embeds:     i.response.Data.Embeds,
 		Components: i.response.Data.Components,
 	}
 
