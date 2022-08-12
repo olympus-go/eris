@@ -277,8 +277,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					}
 					guesses := guessResponse.Parameters.Elements
 
+					// This shouldn't really ever occur
 					if len(guesses) == 0 {
-						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win.").
+						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").
 							EditWithLog(a.logger)
 						a.deleteSession(ownerId)
 						return
@@ -368,7 +369,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					}
 					if gameSession.currentGuesses >= gameSession.maxGuesses {
 						utils.InteractionResponse(s, gameSession.interaction).Components().
-							Message("I give up. You win.").EditWithLog(a.logger)
+							Message("I give up. You win :disappointed:").EditWithLog(a.logger)
 						a.deleteSession(ownerId)
 					} else {
 						_ = gameSession.client.Undo()
