@@ -17,7 +17,8 @@ const (
 	akiStateNil             = 0
 	akiStateThemeSelection  = 1
 	akiStateAnswerSelection = 2
-	akiStateProcessing      = 3
+	akiStateGuessSelection  = 3
+	akiStateProcessing      = 4
 )
 
 type akinatorSession struct {
@@ -27,6 +28,10 @@ type akinatorSession struct {
 	state          int
 	questionLimit  int
 	guessThreshold float64
+	currentGuesses int
+	maxGuesses     int
+	guessCooldown  int
+	guessMessageId string
 }
 
 type AkinatorPlugin struct {
@@ -60,8 +65,29 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			applicationCommandData := i.ApplicationCommandData()
-			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "21q", "start"); !ok {
+			options, ok := utils.GetApplicationCommandOption(applicationCommandData, "21q", "start")
+			if !ok {
 				return
+			}
+
+			questionLimit := 21
+			guessThreshold := 85.0
+			maxGuesses := 3
+			for _, option := range options.Options {
+				if option.Name == "limit" {
+					v, _ := option.Value.(float64)
+					fmt.Println(v)
+					questionLimit = int(v)
+				}
+				if option.Name == "threshold" {
+					v, _ := option.Value.(float64)
+					guessThreshold = v
+				}
+				if option.Name == "guesses" {
+					v, _ := option.Value.(float64)
+					fmt.Println(v)
+					maxGuesses = int(v)
+				}
 			}
 
 			userId := utils.GetInteractionUserId(i.Interaction)
@@ -88,10 +114,14 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 			a.sessions.Set(userId, &akinatorSession{
 				client:         client,
+				interaction:    i.Interaction,
 				ownerId:        userId,
 				state:          akiStateThemeSelection,
-				questionLimit:  40,
-				guessThreshold: 90.0,
+				questionLimit:  questionLimit,
+				guessThreshold: guessThreshold,
+				currentGuesses: 0,
+				maxGuesses:     maxGuesses,
+				guessCooldown:  0,
 			})
 
 			utils.InteractionResponse(s, i.Interaction).Message("Select a theme").
@@ -230,10 +260,13 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
-				if gameSession.client.Progress() >= gameSession.guessThreshold ||
-					gameSession.client.Step()+1 > gameSession.questionLimit {
-					utils.InteractionResponse(s, i.Interaction).DeleteWithLog(a.logger)
+				if (gameSession.client.Step()+1 > gameSession.questionLimit ||
+					gameSession.client.Progress() >= gameSession.guessThreshold) && gameSession.guessCooldown <= 0 {
 
+					utils.InteractionResponse(s, i.Interaction).Components(gameSession.questionButtons(false)).
+						EditWithLog(a.logger)
+
+					gameSession.state = akiStateGuessSelection
 					guessResponse, err := gameSession.client.ListGuesses()
 					if err != nil {
 						a.logger.Error().Err(err).Msg("failed to fetch guesses")
@@ -245,23 +278,109 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					guesses := guessResponse.Parameters.Elements
 
 					if len(guesses) == 0 {
-						_, _ = s.ChannelMessageSend(i.ChannelID, "I give up. You win.")
-					} else {
-						response := fmt.Sprintf("You're thinking of: %s", guesses[0].Element.Name)
-						_, _ = s.ChannelMessageSend(i.ChannelID, response)
-						_, _ = s.ChannelMessageSend(i.ChannelID, guesses[0].Element.AbsolutePicturePath)
+						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win.").
+							EditWithLog(a.logger)
+						a.deleteSession(ownerId)
+						return
 					}
 
-					gameSession.client = nil
+					embed := utils.MessageEmbed().Title(guesses[0].Element.Name).
+						Image(guesses[0].Element.AbsolutePicturePath).Build()
+					message, err := utils.InteractionResponse(s, i.Interaction).Message("You're thinking of...").
+						Embeds(embed).Components(gameSession.guessButtons(true)).FollowUpCreate()
+					if err != nil {
+						a.logger.Error().Err(err).Msg("failed to send guess as followup message")
+						utils.InteractionResponse(s, i.Interaction).Components().
+							Message("Something went wrong.").SendWithLog(a.logger)
+						a.deleteSession(ownerId)
+						return
+					}
+
+					gameSession.interaction = i.Interaction
+					gameSession.guessMessageId = message.ID
+					gameSession.currentGuesses += 1
+					gameSession.state = akiStateGuessSelection
+
 					return
 				}
 
 				utils.InteractionResponse(s, i.Interaction).Message(gameSession.questionStr()).
 					Components(gameSession.questionButtons(true)).EditWithLog(a.logger)
 
+				gameSession.guessCooldown--
 				gameSession.state = akiStateAnswerSelection
 
 				return
+			} else if strings.HasPrefix(messageComponentData.CustomID, "21q_guess_") {
+				idSplit := strings.Split(messageComponentData.CustomID, "_")
+				if len(idSplit) != 4 {
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
+						SendWithLog(a.logger)
+					return
+				}
+
+				selection := idSplit[2]
+				ownerId := idSplit[3]
+				userId := utils.GetInteractionUserId(i.Interaction)
+
+				a.logger.Debug().Str("user_id", userId).
+					Interface("component", messageComponentData).Msg("user interacted with component")
+
+				if userId != ownerId {
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("This isn't your game :bell:").
+						SendWithLog(a.logger)
+					return
+				}
+
+				gameSession, ok := a.sessions.Get(userId)
+				if !ok {
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Game no longer exists.").
+						SendWithLog(a.logger)
+					return
+				}
+
+				switch gameSession.state {
+				case akiStateGuessSelection:
+					break
+				case akiStateProcessing:
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
+						SendWithLog(a.logger)
+					return
+				default:
+					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
+						SendWithLog(a.logger)
+					return
+				}
+
+				if selection == "yes" {
+					utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
+					_, _ = utils.InteractionResponse(s, gameSession.interaction).Components().
+						FollowUpEdit(gameSession.guessMessageId)
+					utils.InteractionResponse(s, i.Interaction).Message(":tada:").SendWithLog(a.logger)
+					a.deleteSession(ownerId)
+				} else if selection == "no" {
+					utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
+						SendWithLog(a.logger)
+					err := utils.InteractionResponse(s, gameSession.interaction).FollowUpDelete(gameSession.guessMessageId)
+					if err != nil {
+						log.Error().Err(err).Str("message_id", gameSession.guessMessageId).
+							Msg("failed to delete follow up message")
+					}
+					if gameSession.currentGuesses >= gameSession.maxGuesses {
+						utils.InteractionResponse(s, gameSession.interaction).Components().
+							Message("I give up. You win.").EditWithLog(a.logger)
+						a.deleteSession(ownerId)
+					} else {
+						_ = gameSession.client.Undo()
+						gameSession.guessCooldown = 3
+						gameSession.questionLimit += 21
+
+						utils.InteractionResponse(s, gameSession.interaction).Message(gameSession.questionStr()).
+							Components(gameSession.questionButtons(true)).EditWithLog(a.logger)
+
+						gameSession.state = akiStateAnswerSelection
+					}
+				}
 			}
 		}
 	}
@@ -322,7 +441,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				return
 			}
 
-			a.deleteSession(s, userId)
+			a.deleteSession(userId)
 			utils.InteractionResponse(s, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 				Message(":wave:").SendWithLog(a.logger)
 
@@ -336,6 +455,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 	commands := make(map[string]*discordgo.ApplicationCommand)
 
+	minGuess := float64(1)
+	maxGuess := float64(5)
+
 	commands["aki_cmd"] = &discordgo.ApplicationCommand{
 		Name:        "21q",
 		Description: "21 questions like game",
@@ -344,6 +466,28 @@ func (a *AkinatorPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 				Name:        "start",
 				Description: "Starts a new game of 21* questions",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
+				Options: []*discordgo.ApplicationCommandOption{
+					{
+						Name:        "questions",
+						Description: "Limit the number of questions asked before guessing (default = 21)",
+						Type:        discordgo.ApplicationCommandOptionInteger,
+						Required:    false,
+					},
+					{
+						Name:        "confidence",
+						Description: "Set the confidence threshold needed before guessing (default = 85.0)",
+						Type:        discordgo.ApplicationCommandOptionNumber,
+						Required:    false,
+					},
+					{
+						Name:        "guesses",
+						Description: "Set the number of guess attempts before giving up (default = 3)",
+						Type:        discordgo.ApplicationCommandOptionInteger,
+						Required:    false,
+						MinValue:    &minGuess,
+						MaxValue:    maxGuess,
+					},
+				},
 			},
 			{
 				Name:        "stop",
@@ -380,9 +524,8 @@ func (a *AkinatorPlugin) themeButtons(userId string, enabled bool) discordgo.Act
 	return actionRowBuilder.Build()
 }
 
-func (a *AkinatorPlugin) deleteSession(session *discordgo.Session, id string) {
+func (a *AkinatorPlugin) deleteSession(id string) {
 	if _, ok := a.sessions.Get(id); ok {
-		//utils.InteractionResponse(session, gameSession.interaction).DeleteWithLog(a.logger)
 		a.sessions.Delete(id)
 	}
 }
@@ -399,5 +542,15 @@ func (a *akinatorSession) questionButtons(enabled bool) discordgo.ActionsRow {
 		actionRowBuilder.Button(button)
 	}
 
+	return actionRowBuilder.Build()
+}
+
+func (a *akinatorSession) guessButtons(enabled bool) discordgo.ActionsRow {
+	var actionRowBuilder utils.ActionsRowBuilder
+	for _, selection := range []string{"Yes", "No"} {
+		id := fmt.Sprintf("21q_guess_%s_%s", strings.ToLower(selection), a.ownerId)
+		button := utils.Button().Label(selection).Id(id).Enabled(enabled).Build()
+		actionRowBuilder.Button(button)
+	}
 	return actionRowBuilder.Build()
 }
