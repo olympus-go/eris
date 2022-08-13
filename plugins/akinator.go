@@ -313,6 +313,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					gameSession.guessMessageId = message.ID
 					gameSession.currentGuesses += 1
 					gameSession.state = akiStateGuessSelection
+					gameSession.previousGuesses = append(gameSession.previousGuesses, guess)
 
 					return
 				}
