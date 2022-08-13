@@ -7,7 +7,6 @@ import (
 	"github.com/olympus-go/athena"
 	"github.com/olympus-go/eris/utils"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"strconv"
 	"strings"
 	"unicode"
@@ -19,7 +18,6 @@ const (
 	akiStateAnswerSelection = 2
 	akiStateGuessSelection  = 3
 	akiStateProcessing      = 4
-	akiEndState             = 5
 )
 
 type akinatorGuess struct {
@@ -77,6 +75,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				return
 			}
 
+			// Set defaults and try and fetch options
 			questionLimit := 21
 			guessThreshold := 85.0
 			maxGuesses := 3
@@ -100,6 +99,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 			a.logger.Debug().Str("user_id", userId).
 				Interface("command", applicationCommandData).Msg("user invoked slash command")
 
+			// Check if the user already has a game running
 			if _, ok := a.sessions.Get(userId); ok {
 				utils.InteractionResponse(s, i.Interaction).Ephemeral().
 					Message("Finish you current game first!").SendWithLog(a.logger)
@@ -107,13 +107,14 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 			}
 
 			utils.InteractionResponse(s, i.Interaction).
-				Message("<a:loading:1005279530438623272> Loading...").SendWithLog(a.logger)
+				Type(discordgo.InteractionResponseDeferredChannelMessageWithSource).SendWithLog(a.logger)
 
+			// Spin up the client
 			client, err := athena.NewClient()
 			if err != nil {
-				log.Error().Err(err).Msg("failed to create akinator client")
+				a.logger.Error().Err(err).Msg("failed to create akinator client")
 				utils.InteractionResponse(s, i.Interaction).Message("Something went wrong.").
-					Flags(discordgo.MessageFlagsEphemeral).SendWithLog(a.logger)
+					Flags(discordgo.MessageFlagsEphemeral).EditWithLog(a.logger)
 				return
 			}
 
@@ -130,6 +131,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				previousGuesses: []akinatorGuess{{name: "Ashley Wsfd"}},
 			})
 
+			// Update the interaction with the initial theme selection
 			utils.InteractionResponse(s, i.Interaction).Message("Select a theme").
 				Components(a.themeButtons(userId, true)).EditWithLog(a.logger)
 
@@ -177,6 +179,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				// If we got this far without returning then let the user know we're thinking
 				utils.InteractionResponse(s, i.Interaction).Type(discordgo.InteractionResponseDeferredMessageUpdate).
 					SendWithLog(a.logger)
 
@@ -193,6 +196,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				// Start the game with the theme of choice
 				if _, err = gameSession.client.NewGame(a.themes[themeIndex]); err != nil {
 					a.logger.Error().Err(err).Msg("could not start game")
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
@@ -252,6 +256,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				gameSession.state = akiStateProcessing
 
+				// Update response to show thinking and disable the buttons
 				utils.InteractionResponse(s, i.Interaction).
 					Message("<a:loading:1005279530438623272> George Tuney is thinking...").
 					Components(gameSession.questionButtons(false)).EditWithLog(a.logger)
@@ -264,6 +269,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				// Submit the answer to the client and fetch the new question
 				if _, err = gameSession.client.Answer(answer); err != nil {
 					a.logger.Error().Err(err).Msg("failed to fetch answer")
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
@@ -271,6 +277,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				// End state check
 				if (gameSession.client.Step()+1 > gameSession.questionLimit ||
 					gameSession.client.Progress() >= gameSession.guessThreshold) && gameSession.guessCooldown <= 0 {
 
@@ -278,17 +285,19 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						EditWithLog(a.logger)
 
 					gameSession.state = akiStateProcessing
+					// Get the first guess available to the client that hasn't been guessed before
 					guess, ok := gameSession.getGuess()
 					if !ok {
-						if gameSession.currentGuesses >= gameSession.maxGuesses {
+						// If there are no guesses, and we're already at our wits end, just give up
+						if gameSession.currentGuesses >= gameSession.maxGuesses || gameSession.client.Step()+1 > 99 {
 							utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
 							utils.InteractionResponse(s, i.Interaction).Components().FollowUpEdit(gameSession.guessMessageId)
 							utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").FollowUpCreate()
 							a.sessions.Delete(ownerId)
 						} else {
+							// Otherwise let's just roll it back and pretend like nothing happened hehe
 							_ = gameSession.client.Undo()
 							gameSession.guessCooldown = 3
-							gameSession.questionLimit += 21
 
 							utils.InteractionResponse(s, gameSession.interaction).Message(gameSession.questionStr()).
 								Components(gameSession.questionButtons(true)).EditWithLog(a.logger)
@@ -298,6 +307,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						return
 					}
 
+					// Send the user our guess
 					embed := utils.MessageEmbed().Title(guess.name).Image(guess.imageUrl).Build()
 					message, err := utils.InteractionResponse(s, i.Interaction).Message("You're thinking of...").
 						Embeds(embed).Components(gameSession.guessButtons(true)).FollowUpCreate()
@@ -309,6 +319,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						return
 					}
 
+					// Update internal state to await for the user response to guess
 					gameSession.interaction = i.Interaction
 					gameSession.guessMessageId = message.ID
 					gameSession.currentGuesses += 1
@@ -318,6 +329,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				// We're not in an end state, so let's update the message with the new question and continue
 				utils.InteractionResponse(s, i.Interaction).Message(gameSession.questionStr()).
 					Components(gameSession.questionButtons(true)).EditWithLog(a.logger)
 
@@ -370,14 +382,15 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					Type(discordgo.InteractionResponseDeferredMessageUpdate).SendWithLog(a.logger)
 
 				if selection == "yes" {
+					// Woo the guess was marked as correct. Time to celebrate and clean up.
 					utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
 					_, _ = utils.InteractionResponse(s, gameSession.interaction).Components().
 						FollowUpEdit(gameSession.guessMessageId)
 					utils.InteractionResponse(s, i.Interaction).Message(":tada:").FollowUpCreate()
-					gameSession.state = akiEndState
 					a.sessions.Delete(ownerId)
 				} else if selection == "no" {
-					if gameSession.currentGuesses >= gameSession.maxGuesses {
+					// The guess was wrong, so let's check our current status and determine if we should give up.
+					if gameSession.currentGuesses >= gameSession.maxGuesses || gameSession.client.Step()+1 > 99 {
 						utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
 						utils.InteractionResponse(s, i.Interaction).Components().FollowUpEdit(gameSession.guessMessageId)
 						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").FollowUpCreate()
@@ -385,7 +398,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					} else {
 						err := utils.InteractionResponse(s, gameSession.interaction).FollowUpDelete(gameSession.guessMessageId)
 						if err != nil {
-							log.Error().Err(err).Str("message_id", gameSession.guessMessageId).
+							a.logger.Error().Err(err).Str("message_id", gameSession.guessMessageId).
 								Msg("failed to delete follow up message")
 						}
 
