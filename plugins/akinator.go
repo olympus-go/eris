@@ -26,31 +26,28 @@ type akinatorGuess struct {
 }
 
 type akinatorSession struct {
-	client          *athena.Client
-	interaction     *discordgo.Interaction
-	ownerId         string
-	state           int
-	questionLimit   int
-	guessThreshold  float64
-	currentGuesses  int
-	maxGuesses      int
-	guessCooldown   int
-	guessMessageId  string
-	previousGuesses []akinatorGuess
+	client              *athena.Client
+	themes              []athena.Theme
+	interaction         *discordgo.Interaction
+	ownerId             string
+	state               int
+	questionLimit       int
+	confidenceThreshold float64
+	currentGuesses      int
+	maxGuesses          int
+	guessCooldown       int
+	guessMessageId      string
+	previousGuesses     []akinatorGuess
 }
 
 type AkinatorPlugin struct {
 	sessions *threadsafe.Map[string, *akinatorSession]
-	themes   []athena.Theme
 	logger   zerolog.Logger
 }
 
 func Akinator(logger zerolog.Logger) *AkinatorPlugin {
-	themes, _ := athena.GetThemes()
-
 	return &AkinatorPlugin{
 		sessions: threadsafe.NewMap[string, *akinatorSession](),
-		themes:   themes,
 		logger:   logger.With().Str("plugin", "akinator").Logger(),
 	}
 }
@@ -77,7 +74,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 			// Set defaults and try and fetch options
 			questionLimit := 21
-			guessThreshold := 85.0
+			confidenceThreshold := 85.0
 			maxGuesses := 3
 			for _, option := range options.Options {
 				if option.Name == "questions" {
@@ -86,7 +83,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				}
 				if option.Name == "confidence" {
 					v, _ := option.Value.(float64)
-					guessThreshold = v
+					confidenceThreshold = v
 				}
 				if option.Name == "guesses" {
 					v, _ := option.Value.(float64)
@@ -109,73 +106,29 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 			utils.InteractionResponse(s, i.Interaction).
 				Type(discordgo.InteractionResponseDeferredChannelMessageWithSource).SendWithLog(a.logger)
 
-			// Spin up the client
-			client, err := athena.NewClient()
+			gameSession, err := newAkinatorSession(questionLimit, confidenceThreshold, maxGuesses)
 			if err != nil {
-				a.logger.Error().Err(err).Msg("failed to create akinator client")
+				a.logger.Error().Err(err).Msg("failed to create akinator session")
 				utils.InteractionResponse(s, i.Interaction).Message("Something went wrong.").
 					Flags(discordgo.MessageFlagsEphemeral).EditWithLog(a.logger)
 				return
 			}
+			gameSession.ownerId = userId
+			gameSession.interaction = i.Interaction
+			gameSession.state = akiStateThemeSelection
 
-			a.sessions.Set(userId, &akinatorSession{
-				client:          client,
-				interaction:     i.Interaction,
-				ownerId:         userId,
-				state:           akiStateThemeSelection,
-				questionLimit:   questionLimit,
-				guessThreshold:  guessThreshold,
-				currentGuesses:  0,
-				maxGuesses:      maxGuesses,
-				guessCooldown:   0,
-				previousGuesses: []akinatorGuess{{name: "Ashley Wsfd"}},
-			})
+			a.sessions.Set(userId, gameSession)
 
 			// Update the interaction with the initial theme selection
 			utils.InteractionResponse(s, i.Interaction).Message("Select a theme").
-				Components(a.themeButtons(userId, true)).EditWithLog(a.logger)
+				Components(gameSession.themeButtons(userId, true)).EditWithLog(a.logger)
 
 			return
 		case discordgo.InteractionMessageComponent:
 			messageComponentData := i.MessageComponentData()
 			if strings.HasPrefix(messageComponentData.CustomID, "21q_theme") {
-				idSplit := strings.Split(messageComponentData.CustomID, "_")
-				if len(idSplit) != 4 {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				selection := idSplit[2]
-				ownerId := idSplit[3]
-				userId := utils.GetInteractionUserId(i.Interaction)
-
-				a.logger.Debug().Str("user_id", userId).
-					Interface("component", messageComponentData).Msg("user interacted with component")
-
-				if userId != ownerId {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("This isn't your game :bell:").
-						SendWithLog(a.logger)
-					return
-				}
-
-				gameSession, ok := a.sessions.Get(userId)
+				gameSession, selection, ok := a.getGameSession(s, i, akiStateThemeSelection)
 				if !ok {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Game no longer exists.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				switch gameSession.state {
-				case akiStateThemeSelection:
-					break
-				case akiStateProcessing:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
-						SendWithLog(a.logger)
-					return
-				default:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
-						SendWithLog(a.logger)
 					return
 				}
 
@@ -186,7 +139,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				gameSession.state = akiStateProcessing
 				utils.InteractionResponse(s, i.Interaction).
 					Message("<a:loading:1005279530438623272> Starting game...").
-					Components(a.themeButtons(gameSession.ownerId, false)).EditWithLog(a.logger)
+					Components(gameSession.themeButtons(gameSession.ownerId, false)).EditWithLog(a.logger)
 
 				themeIndex, err := strconv.Atoi(selection)
 				if err != nil {
@@ -197,7 +150,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 				}
 
 				// Start the game with the theme of choice
-				if _, err = gameSession.client.NewGame(a.themes[themeIndex]); err != nil {
+				if _, err = gameSession.client.NewGame(gameSession.themes[themeIndex]); err != nil {
 					a.logger.Error().Err(err).Msg("could not start game")
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
 						FollowUpCreate()
@@ -211,43 +164,8 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				return
 			} else if strings.HasPrefix(messageComponentData.CustomID, "21q_answer_") {
-				idSplit := strings.Split(messageComponentData.CustomID, "_")
-				if len(idSplit) != 4 {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				selection := idSplit[2]
-				ownerId := idSplit[3]
-				userId := utils.GetInteractionUserId(i.Interaction)
-
-				a.logger.Debug().Str("user_id", userId).
-					Interface("component", messageComponentData).Msg("user interacted with component")
-
-				if userId != ownerId {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("This isn't your game :bell:").
-						SendWithLog(a.logger)
-					return
-				}
-
-				gameSession, ok := a.sessions.Get(userId)
+				gameSession, selection, ok := a.getGameSession(s, i, akiStateAnswerSelection)
 				if !ok {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Game no longer exists.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				switch gameSession.state {
-				case akiStateAnswerSelection:
-					break
-				case akiStateProcessing:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
-						SendWithLog(a.logger)
-					return
-				default:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
-						SendWithLog(a.logger)
 					return
 				}
 
@@ -279,7 +197,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				// End state check
 				if (gameSession.client.Step()+1 > gameSession.questionLimit ||
-					gameSession.client.Progress() >= gameSession.guessThreshold) && gameSession.guessCooldown <= 0 {
+					gameSession.client.Progress() >= gameSession.confidenceThreshold) && gameSession.guessCooldown <= 0 {
 
 					utils.InteractionResponse(s, i.Interaction).Components(gameSession.questionButtons(false)).
 						EditWithLog(a.logger)
@@ -293,7 +211,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 							utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
 							utils.InteractionResponse(s, i.Interaction).Components().FollowUpEdit(gameSession.guessMessageId)
 							utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").FollowUpCreate()
-							a.sessions.Delete(ownerId)
+							a.sessions.Delete(gameSession.ownerId)
 						} else {
 							// Otherwise let's just roll it back and pretend like nothing happened hehe
 							_ = gameSession.client.Undo()
@@ -315,7 +233,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						a.logger.Error().Err(err).Msg("failed to send guess as followup message")
 						utils.InteractionResponse(s, i.Interaction).Components().
 							Message("Something went wrong.").FollowUpCreate()
-						a.cleanupSession(s, ownerId)
+						a.cleanupSession(s, gameSession.ownerId)
 						return
 					}
 
@@ -338,43 +256,8 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				return
 			} else if strings.HasPrefix(messageComponentData.CustomID, "21q_guess_") {
-				idSplit := strings.Split(messageComponentData.CustomID, "_")
-				if len(idSplit) != 4 {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				selection := idSplit[2]
-				ownerId := idSplit[3]
-				userId := utils.GetInteractionUserId(i.Interaction)
-
-				a.logger.Debug().Str("user_id", userId).
-					Interface("component", messageComponentData).Msg("user interacted with component")
-
-				if userId != ownerId {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("This isn't your game :bell:").
-						SendWithLog(a.logger)
-					return
-				}
-
-				gameSession, ok := a.sessions.Get(userId)
+				gameSession, selection, ok := a.getGameSession(s, i, akiStateGuessSelection)
 				if !ok {
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Game no longer exists.").
-						SendWithLog(a.logger)
-					return
-				}
-
-				switch gameSession.state {
-				case akiStateGuessSelection:
-					break
-				case akiStateProcessing:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
-						SendWithLog(a.logger)
-					return
-				default:
-					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
-						SendWithLog(a.logger)
 					return
 				}
 
@@ -387,14 +270,14 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					_, _ = utils.InteractionResponse(s, gameSession.interaction).Components().
 						FollowUpEdit(gameSession.guessMessageId)
 					utils.InteractionResponse(s, i.Interaction).Message(":tada:").FollowUpCreate()
-					a.sessions.Delete(ownerId)
+					a.sessions.Delete(gameSession.ownerId)
 				} else if selection == "no" {
 					// The guess was wrong, so let's check our current status and determine if we should give up.
 					if gameSession.currentGuesses >= gameSession.maxGuesses || gameSession.client.Step()+1 > 99 {
 						utils.InteractionResponse(s, gameSession.interaction).DeleteWithLog(a.logger)
 						utils.InteractionResponse(s, i.Interaction).Components().FollowUpEdit(gameSession.guessMessageId)
 						utils.InteractionResponse(s, i.Interaction).Message("I give up. You win :disappointed:").FollowUpCreate()
-						a.sessions.Delete(ownerId)
+						a.sessions.Delete(gameSession.ownerId)
 					} else {
 						err := utils.InteractionResponse(s, gameSession.interaction).FollowUpDelete(gameSession.guessMessageId)
 						if err != nil {
@@ -549,19 +432,50 @@ func (a *AkinatorPlugin) Intents() []discordgo.Intent {
 	return nil
 }
 
-func (a *AkinatorPlugin) themeButtons(userId string, enabled bool) discordgo.ActionsRow {
-	var actionRowBuilder utils.ActionsRowBuilder
-	for index, theme := range a.themes {
-		themeName := []rune(strings.ToLower(theme.Name))
-		if len(themeName) > 0 {
-			themeName[0] = unicode.ToUpper(themeName[0])
-		}
-		button := utils.Button().Label(string(themeName)).Id(fmt.Sprintf("21q_theme_%d_%s", index, userId)).
-			Enabled(enabled).Build()
-		actionRowBuilder.Button(button)
+func (a *AkinatorPlugin) getGameSession(s *discordgo.Session, i *discordgo.InteractionCreate, targetState int) (*akinatorSession, string, bool) {
+	messageComponentData := i.MessageComponentData()
+
+	idSplit := strings.Split(messageComponentData.CustomID, "_")
+	if len(idSplit) != 4 {
+		utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
+			SendWithLog(a.logger)
+		return nil, "", false
 	}
 
-	return actionRowBuilder.Build()
+	selection := idSplit[2]
+	ownerId := idSplit[3]
+	userId := utils.GetInteractionUserId(i.Interaction)
+
+	a.logger.Debug().Str("user_id", userId).
+		Interface("component", messageComponentData).Msg("user interacted with component")
+
+	if userId != ownerId {
+		utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("This isn't your game :bell:").
+			SendWithLog(a.logger)
+		return nil, "", false
+	}
+
+	gameSession, ok := a.sessions.Get(userId)
+	if !ok {
+		utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Game no longer exists.").
+			SendWithLog(a.logger)
+		return nil, "", false
+	}
+
+	switch gameSession.state {
+	case targetState:
+		break
+	case akiStateProcessing:
+		utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Please wait, I'm thinking...").
+			SendWithLog(a.logger)
+		return nil, "", false
+	default:
+		utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Invalid button for game state.").
+			SendWithLog(a.logger)
+		return nil, "", false
+	}
+
+	return gameSession, selection, true
 }
 
 func (a *AkinatorPlugin) cleanupSession(session *discordgo.Session, id string) {
@@ -576,6 +490,32 @@ func (a *AkinatorPlugin) cleanupSession(session *discordgo.Session, id string) {
 	}
 }
 
+func newAkinatorSession(questionLimit int, confidenceThreshold float64, maxGuesses int) (*akinatorSession, error) {
+	client, err := athena.NewClient()
+	if err != nil {
+		return nil, err
+	}
+
+	themes, err := athena.GetThemes()
+	if err != nil {
+		return nil, err
+	}
+
+	session := akinatorSession{
+		client:              client,
+		themes:              themes,
+		state:               akiStateNil,
+		questionLimit:       questionLimit,
+		confidenceThreshold: confidenceThreshold,
+		currentGuesses:      0,
+		maxGuesses:          maxGuesses,
+		guessCooldown:       0,
+		previousGuesses:     []akinatorGuess{{name: "Ashley Wsfd"}},
+	}
+
+	return &session, nil
+}
+
 func (a *akinatorSession) questionStr() string {
 	return fmt.Sprintf("%d) %s [%.1f]", a.client.Step()+1, a.client.Question(), a.client.Progress())
 }
@@ -584,6 +524,21 @@ func (a *akinatorSession) questionButtons(enabled bool) discordgo.ActionsRow {
 	var actionRowBuilder utils.ActionsRowBuilder
 	for index, answer := range a.client.Answers() {
 		button := utils.Button().Label(answer).Id(fmt.Sprintf("21q_answer_%d_%s", index, a.ownerId)).
+			Enabled(enabled).Build()
+		actionRowBuilder.Button(button)
+	}
+
+	return actionRowBuilder.Build()
+}
+
+func (a *akinatorSession) themeButtons(userId string, enabled bool) discordgo.ActionsRow {
+	var actionRowBuilder utils.ActionsRowBuilder
+	for index, theme := range a.themes {
+		themeName := []rune(strings.ToLower(theme.Name))
+		if len(themeName) > 0 {
+			themeName[0] = unicode.ToUpper(themeName[0])
+		}
+		button := utils.Button().Label(string(themeName)).Id(fmt.Sprintf("21q_theme_%d_%s", index, userId)).
 			Enabled(enabled).Build()
 		actionRowBuilder.Button(button)
 	}
