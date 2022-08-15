@@ -142,12 +142,15 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					Components(gameSession.themeButtons(gameSession.ownerId, false)).EditWithLog(a.logger)
 
 				themeIndex, err := strconv.Atoi(selection)
-				if err != nil {
+				if err != nil || themeIndex < 0 || themeIndex >= len(gameSession.themes) {
 					a.logger.Error().Err(err).Str("theme_index", selection).Msg("unexpected theme index received")
 					utils.InteractionResponse(s, i.Interaction).Ephemeral().Message("Something went wrong.").
 						FollowUpCreate()
 					return
 				}
+
+				a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Str("theme", gameSession.themes[themeIndex].Name).Msg("user selected theme")
 
 				// Start the game with the theme of choice
 				if _, err = gameSession.client.NewGame(gameSession.themes[themeIndex]); err != nil {
@@ -187,6 +190,10 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 					return
 				}
 
+				a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Str("question", gameSession.client.Question()).Int("response", answer).
+					Msg("user selected response to question")
+
 				// Submit the answer to the client and fetch the new question
 				if _, err = gameSession.client.Answer(answer); err != nil {
 					a.logger.Error().Err(err).Msg("failed to fetch answer")
@@ -214,6 +221,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 							a.sessions.Delete(gameSession.ownerId)
 						} else {
 							// Otherwise let's just roll it back and pretend like nothing happened hehe
+							a.logger.Debug().Str("game_id", gameSession.ownerId).
+								Msg("end state reached but no new guesses found")
+
 							_ = gameSession.client.Undo()
 							gameSession.guessCooldown = 3
 
@@ -236,6 +246,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 						a.cleanupSession(s, gameSession.ownerId)
 						return
 					}
+
+					a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+						Str("guess", guess.name).Msg("guess sent to user")
 
 					// Update internal state to await for the user response to guess
 					gameSession.interaction = i.Interaction
@@ -263,6 +276,9 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				utils.InteractionResponse(s, i.Interaction).
 					Type(discordgo.InteractionResponseDeferredMessageUpdate).SendWithLog(a.logger)
+
+				a.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+					Str("response", selection).Msg("user selected response to guess")
 
 				if selection == "yes" {
 					// Woo the guess was marked as correct. Time to celebrate and clean up.
