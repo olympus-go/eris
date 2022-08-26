@@ -135,7 +135,8 @@ func (b *Bot) pluginHandler() any {
 				for _, plugin := range b.plugins {
 					message += fmt.Sprintf("%s - %s\n", plugin.Name(), plugin.Description())
 				}
-				_ = utils.SendEphemeralInteractionResponse(session, i.Interaction, "```"+message+"```")
+				utils.InteractionResponse(session, i.Interaction).Ephemeral().
+					Message("```" + message + "```").SendWithLog(log.Logger)
 			}
 		}
 	}
