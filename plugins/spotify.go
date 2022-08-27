@@ -162,7 +162,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 
-			spotSession.trackQueue = nil
+			spotSession.trackQueue.Empty()
 			close(spotSession.queueChan)
 			close(spotSession.commandChan)
 
@@ -670,12 +670,14 @@ func (s *SpotifyPlugin) yesNoButtons(uid string, enabled bool) []discordgo.Messa
 }
 
 func (s *spotifySession) enqueueTrack(track authoredTrack) {
-	s.queueChan <- track.track
-	s.trackQueue.Append(track)
+	if s.trackQueue != nil {
+		s.queueChan <- track.track
+		s.trackQueue.Append(track)
+	}
 }
 
 func (s *spotifySession) dequeueTrack() {
-	if s.trackQueue.Len() > 0 {
+	if s.trackQueue != nil && s.trackQueue.Len() > 0 {
 		s.trackQueue.Delete(0)
 	}
 }
@@ -753,9 +755,13 @@ func (s *spotifySession) trackPlayer(ctx context.Context) {
 			}
 
 			s.state = spotifyStopState
-			_ = s.voiceConnection.Speaking(false)
+			if s.voiceConnection != nil {
+				_ = s.voiceConnection.Speaking(false)
+			}
+			if encodeSession != nil {
+				encodeSession.Cleanup()
+			}
 			s.dequeueTrack()
-			encodeSession.Cleanup()
 		}
 	}
 }
