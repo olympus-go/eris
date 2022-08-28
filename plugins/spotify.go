@@ -10,6 +10,7 @@ import (
 	"github.com/olympus-go/apollo/spotify"
 	"github.com/olympus-go/eris/utils"
 	"github.com/rs/zerolog"
+	"io"
 	"strings"
 	"time"
 )
@@ -36,7 +37,10 @@ type spotifySession struct {
 	queueChan        chan spotify.Track
 	commandChan      chan int
 	state            int
+	playPause        chan bool
+	workerCancel     context.CancelFunc
 	voiceConnection  *discordgo.VoiceConnection
+	logger           zerolog.Logger
 }
 
 type SpotifyPlugin struct {
@@ -94,8 +98,6 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				spotSession = s.newSession()
 				s.sessions.Set(i.Interaction.GuildID, spotSession)
 			}
-			spotSession.commandChan <- spotifyPauseState
-			//spotSession.state = spotifyPauseState
 
 			voiceId := utils.GetInteractionUserVoiceStateId(discordSession, i.Interaction)
 
@@ -112,14 +114,22 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 
+			//go spotSession.trackPlayer(context.Background())
+
 			// TODO might need some special handling for when we ditch a channel for another
 			if spotSession.voiceConnection != nil {
+				spotSession.commandChan <- spotifyPauseState
 				if err := spotSession.voiceConnection.Disconnect(); err != nil {
 					s.logger.Error().Err(err).Msg("failed to disconnect from voice channel")
 					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
 						Message("Something went wrong.").SendWithLog(s.logger)
 					return
 				}
+			} else {
+				var ctx context.Context
+				ctx, spotSession.workerCancel = context.WithCancel(context.Background())
+				go spotSession.listenForCommands(ctx)
+				go spotSession.listenForTracks(ctx)
 			}
 
 			var err error
@@ -163,8 +173,9 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			}
 
 			spotSession.trackQueue.Empty()
-			close(spotSession.queueChan)
-			close(spotSession.commandChan)
+			spotSession.workerCancel()
+			//spotSession.queueChan = make(chan spotify.Track, 100)
+			//spotSession.commandChan = make(chan int)
 
 			if err := spotSession.voiceConnection.Disconnect(); err != nil {
 				s.logger.Error().Err(err).Msg("failed to disconnect from voice channel")
@@ -319,7 +330,8 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 				spotSession.enqueueTrack(aTrack)
 
-				s.logger.Debug().Str("user_id", userId).Interface("track", s.buildTrackObject(aTrack.track)).Msg("user enqueued track")
+				s.logger.Debug().Str("user_id", userId).
+					Interface("track", spotSession.buildTrackObject(aTrack.track)).Msg("user enqueued track")
 
 				message := fmt.Sprintf("%s by %s added to queue.", aTrack.track.Name(), aTrack.track.Artist())
 				utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
@@ -383,10 +395,16 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			for index, aTrack := range tracks {
 				if index == 0 {
 					message += "Currently playing:\n"
-					timeElapsed := (time.Duration(spotSession.framesProcessed*20) * time.Millisecond).Round(time.Second).String()
-					totalTime := (time.Duration(aTrack.track.Duration()) * time.Millisecond).Round(time.Second).String()
-					message += fmt.Sprintf("  %s - %s [%s/%s] (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(),
-						timeElapsed, totalTime, aTrack.authorName)
+					message += fmt.Sprintf("  %s - %s (@%s)\n", aTrack.track.Name(), aTrack.track.Artist(),
+						aTrack.authorName)
+
+					elapsedDuration := (time.Duration(spotSession.framesProcessed*20) * time.Millisecond).Round(time.Second)
+					totalDuration := (time.Duration(aTrack.track.Duration()) * time.Millisecond).Round(time.Second)
+					elapsedPercent := elapsedDuration.Seconds() / totalDuration.Seconds()
+					message += fmt.Sprintf("  <%s%s> [%s/%s]\n", strings.Repeat("\u2588", int(elapsedPercent*30)),
+						strings.Repeat("\u2591", int(30-(elapsedPercent*30))), elapsedDuration.String(),
+						totalDuration.String())
+
 					if len(tracks) > 1 {
 						message += "Up next:\n"
 					}
@@ -403,6 +421,82 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 
 			utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 				Message(message).SendWithLog(s.logger)
+		}
+	}
+
+	handlers["spotify_resume_handler"] = func(discordSession *discordgo.Session, i *discordgo.InteractionCreate) {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			applicationCommandData := i.ApplicationCommandData()
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "resume"); !ok {
+				return
+			}
+
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
+			if i.Interaction.GuildID == "" {
+				utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+					Message("I can't do that in a DM, sry.").SendWithLog(s.logger)
+				return
+			}
+
+			// If the session for the guild doesn't already exist, create it
+			spotSession, ok := s.sessions.Get(i.Interaction.GuildID)
+			if !ok {
+				utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+					Message("I don't think I'm in a voice chat here. ¯\\_(ツ)_/¯").SendWithLog(s.logger)
+				return
+			}
+
+			if spotSession.trackQueue.Len() == 0 {
+				utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Nothing in queue.").SendWithLog(s.logger)
+				return
+			}
+
+			spotSession.commandChan <- spotifyPlayState
+
+			utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+				Message(":arrow_forward:").SendWithLog(s.logger)
+		}
+	}
+
+	handlers["spotify_pause_handler"] = func(discordSession *discordgo.Session, i *discordgo.InteractionCreate) {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			applicationCommandData := i.ApplicationCommandData()
+			if _, ok := utils.GetApplicationCommandOption(applicationCommandData, "spotify", "pause"); !ok {
+				return
+			}
+
+			s.logger.Debug().Str("user_id", utils.GetInteractionUserId(i.Interaction)).
+				Interface("command", applicationCommandData).Msg("user invoked slash command")
+
+			if i.Interaction.GuildID == "" {
+				utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+					Message("I can't do that in a DM, sry.").SendWithLog(s.logger)
+				return
+			}
+
+			// If the session for the guild doesn't already exist, create it
+			spotSession, ok := s.sessions.Get(i.Interaction.GuildID)
+			if !ok {
+				utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+					Message("I don't think I'm in a voice chat here. ¯\\_(ツ)_/¯").SendWithLog(s.logger)
+				return
+			}
+
+			if spotSession.trackQueue.Len() == 0 {
+				utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+					Message("Nothing is currently playing.").SendWithLog(s.logger)
+				return
+			}
+
+			spotSession.commandChan <- spotifyPauseState
+
+			utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
+				Message(":pause_button:").SendWithLog(s.logger)
 		}
 	}
 
@@ -431,8 +525,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 
-			// TODO actually implement this
-			if spotSession.state != spotifyPlayState {
+			if spotSession.trackQueue.Len() == 0 {
 				utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("Nothing to skip.").SendWithLog(s.logger)
 				return
@@ -442,7 +535,7 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			track := spotSession.trackQueue.Get(0)
 			if track.authorId != userId {
 				s.logger.Debug().Str("user_id", userId).Str("author_id", track.authorId).
-					Interface("track", s.buildTrackObject(track.track)).Msg("user attempted to skip track")
+					Interface("track", spotSession.buildTrackObject(track.track)).Msg("user attempted to skip track")
 				utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 					Message("You cannot skip a track you didn't queue.").SendWithLog(s.logger)
 				return
@@ -451,8 +544,6 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			spotSession.commandChan <- spotifyNextState
 			utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
 				Message(":gun:").SendWithLog(s.logger)
-
-		default:
 		}
 	}
 
@@ -498,11 +589,13 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			go func() {
 				token := spotify.GetOAuthToken()
 				if err := spotSession.player.LoginWithToken("georgetuney", token); err != nil {
-					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().Message("Login failed :(").
-						FollowUpCreate()
+					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+						Message("Login failed :(").FollowUpCreate()
 				} else {
-					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().Message("Login successful :tada:").
-						FollowUpCreate()
+					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+						Message("Login successful :tada:").FollowUpCreate()
+					spotSession.logger = spotSession.logger.With().
+						Str("spotify_user", spotSession.player.Username()).Logger()
 				}
 			}()
 		case discordgo.InteractionMessageComponent:
@@ -608,6 +701,16 @@ func (s *SpotifyPlugin) Commands() map[string]*discordgo.ApplicationCommand {
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 			{
+				Name:        "resume",
+				Description: "Resume playback",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+			{
+				Name:        "pause",
+				Description: "Pause the currently playing song",
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			},
+			{
 				Name:        "skip",
 				Description: "Skip the currently playing song",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -640,12 +743,19 @@ func (s *SpotifyPlugin) newSession() *spotifySession {
 		queueChan:        make(chan spotify.Track, 100),
 		commandChan:      make(chan int),
 		state:            0,
+		playPause:        make(chan bool),
 		voiceConnection:  nil,
+		logger:           s.logger.With().Logger(),
 	}
 
-	go spotSession.trackPlayer(context.Background())
+	//go spotSession.listenForTracks(context.Background())
+	//go spotSession.trackPlayer(context.Background())
 
 	return spotSession
+}
+
+func (s *SpotifyPlugin) clearSession(session *spotifySession) {
+
 }
 
 func (s *SpotifyPlugin) yesNoButtons(uid string, enabled bool) []discordgo.MessageComponent {
@@ -682,91 +792,107 @@ func (s *spotifySession) dequeueTrack() {
 	}
 }
 
-func (s *spotifySession) trackPlayer(ctx context.Context) {
+func (s *spotifySession) listenForCommands(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case cmd := <-s.commandChan:
-			s.state = cmd
-		case track := <-s.queueChan:
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			r, err := s.player.DownloadTrack(track)
-			if err != nil {
-				s.dequeueTrack()
-				//s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
-				continue
-			}
-			s.framesProcessed = 0
-			encodeSession, _ := dca.EncodeMem(r, dca.StdEncodeOptions)
-			// Create a channel that gives us about 1 minutes of buffer room
-			encodedFrames := make(chan []byte, 3000)
-
-			go func(encodeSession *dca.EncodeSession, encodedFrames chan<- []byte) {
-				for {
-					frame, err := encodeSession.OpusFrame()
-					if err != nil {
-						close(encodedFrames)
-						//s.logger.Debug().Interface("track", s.buildTrackObject(track)).Msg("finished encoding track")
-						return
-					}
-					encodedFrames <- frame
-				}
-			}(encodeSession, encodedFrames)
-
-			s.state = spotifyPlayState
-			_ = s.voiceConnection.Speaking(true)
-		playLoop:
-			for {
-				// If it's not currently playing, await new instructions
+			switch cmd {
+			case spotifyPlayState:
 				if s.state != spotifyPlayState {
-					select {
-					case cmd := <-s.commandChan:
-						switch cmd {
-						case spotifyPlayState:
-							s.state = cmd
-						case spotifyNextState:
-							break playLoop
-						}
-					}
+					<-s.playPause
+					s.state = spotifyPlayState
 				}
-
-				if s.state == spotifyPlayState {
-					select {
-					case cmd := <-s.commandChan:
-						s.state = cmd
-					case frame, ok := <-encodedFrames:
-						if !ok || s.voiceConnection == nil {
-							break playLoop
-						}
-
-						select {
-						case s.voiceConnection.OpusSend <- frame:
-							s.framesProcessed++
-						case <-time.After(time.Second * 5):
-							break playLoop
-						}
-					default:
-					}
+			case spotifyPauseState:
+				if s.state != spotifyPauseState {
+					s.playPause <- true
+					s.state = spotifyPauseState
 				}
 			}
-
-			s.state = spotifyStopState
-			if s.voiceConnection != nil {
-				_ = s.voiceConnection.Speaking(false)
-			}
-			if encodeSession != nil {
-				encodeSession.Cleanup()
-			}
-			s.dequeueTrack()
 		}
 	}
 }
 
-func (s *SpotifyPlugin) buildTrackObject(track spotify.Track) any {
+func (s *spotifySession) listenForTracks(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case track := <-s.queueChan:
+			trackReader, err := s.player.DownloadTrack(track)
+			if err != nil {
+				s.dequeueTrack()
+				s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
+				continue
+			}
+			encodedFrames := s.loadTrack(ctx, trackReader)
+
+			s.framesProcessed = 0
+			s.playTrack(ctx, encodedFrames)
+
+			s.dequeueTrack()
+			if s.voiceConnection != nil {
+				_ = s.voiceConnection.Speaking(false)
+			}
+		}
+	}
+
+}
+
+func (s *spotifySession) loadTrack(ctx context.Context, trackReader io.Reader) <-chan []byte {
+	// Create a channel that gives us about 1 minutes of buffer room
+	encodedFrames := make(chan []byte, 3000)
+
+	go func(ctx context.Context, encodedFrames chan<- []byte) {
+		encodeSession, _ := dca.EncodeMem(trackReader, dca.StdEncodeOptions)
+		defer func() {
+			if encodeSession != nil {
+				encodeSession.Cleanup()
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				frame, err := encodeSession.OpusFrame()
+				if err != nil {
+					close(encodedFrames)
+					return
+				}
+				encodedFrames <- frame
+			}
+		}
+	}(ctx, encodedFrames)
+
+	return encodedFrames
+}
+
+func (s *spotifySession) playTrack(ctx context.Context, data <-chan []byte) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.playPause:
+			s.playPause <- true
+		case frame, ok := <-data:
+			if !ok || s.voiceConnection == nil {
+				return
+			}
+
+			select {
+			case s.voiceConnection.OpusSend <- frame:
+				s.framesProcessed++
+			case <-time.After(time.Second * 5):
+				return
+			}
+		}
+	}
+}
+
+func (s *spotifySession) buildTrackObject(track spotify.Track) any {
 	return struct {
 		Name   string
 		Artist string
