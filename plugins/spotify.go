@@ -114,15 +114,17 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 				return
 			}
 
-			//go spotSession.trackPlayer(context.Background())
+			utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
+				Type(discordgo.InteractionResponseDeferredChannelMessageWithSource).SendWithLog(s.logger)
 
-			// TODO might need some special handling for when we ditch a channel for another
 			if spotSession.voiceConnection != nil {
 				spotSession.commandChan <- spotifyPauseState
+				// A pause command should return almost instantaneously, but we should still wait for the player to stop
+				time.Sleep(30 * time.Millisecond)
 				if err := spotSession.voiceConnection.Disconnect(); err != nil {
 					s.logger.Error().Err(err).Msg("failed to disconnect from voice channel")
 					utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
-						Message("Something went wrong.").SendWithLog(s.logger)
+						Message("Something went wrong.").EditWithLog(s.logger)
 					return
 				}
 			} else {
@@ -137,14 +139,14 @@ func (s *SpotifyPlugin) Handlers() map[string]any {
 			if err != nil {
 				s.logger.Error().Err(err).Msg("failed to join voice channel")
 				utils.InteractionResponse(discordSession, i.Interaction).Ephemeral().
-					Message("Something went wrong.").SendWithLog(s.logger)
+					Message("Something went wrong.").EditWithLog(s.logger)
 				return
 			}
 
 			spotSession.commandChan <- spotifyPlayState
 
 			utils.InteractionResponse(discordSession, i.Interaction).Flags(discordgo.MessageFlagsEphemeral).
-				Message(":tada:").SendWithLog(s.logger)
+				Message(":tada:").EditWithLog(s.logger)
 		}
 	}
 
@@ -742,7 +744,7 @@ func (s *SpotifyPlugin) newSession() *spotifySession {
 		framesProcessed:  0,
 		queueChan:        make(chan spotify.Track, 100),
 		commandChan:      make(chan int),
-		state:            0,
+		state:            spotifyPlayState,
 		playPause:        make(chan bool),
 		voiceConnection:  nil,
 		logger:           s.logger.With().Logger(),
@@ -826,7 +828,7 @@ func (s *spotifySession) listenForTracks(ctx context.Context) {
 				s.logger.Error().Err(err).Str("track", track.Name()).Msg("failed to download track")
 				continue
 			}
-			encodedFrames := s.loadTrack(ctx, trackReader)
+			encodedFrames := s.loadTrack(ctx, trackReader, s.buildTrackObject(track))
 
 			s.framesProcessed = 0
 			s.playTrack(ctx, encodedFrames)
@@ -840,7 +842,7 @@ func (s *spotifySession) listenForTracks(ctx context.Context) {
 
 }
 
-func (s *spotifySession) loadTrack(ctx context.Context, trackReader io.Reader) <-chan []byte {
+func (s *spotifySession) loadTrack(ctx context.Context, trackReader io.Reader, trackInfo any) <-chan []byte {
 	// Create a channel that gives us about 1 minutes of buffer room
 	encodedFrames := make(chan []byte, 3000)
 
@@ -860,6 +862,7 @@ func (s *spotifySession) loadTrack(ctx context.Context, trackReader io.Reader) <
 				frame, err := encodeSession.OpusFrame()
 				if err != nil {
 					close(encodedFrames)
+					s.logger.Debug().Interface("track", trackInfo).Msg("finished encoding track")
 					return
 				}
 				encodedFrames <- frame
@@ -885,7 +888,7 @@ func (s *spotifySession) playTrack(ctx context.Context, data <-chan []byte) {
 			select {
 			case s.voiceConnection.OpusSend <- frame:
 				s.framesProcessed++
-			case <-time.After(time.Second * 5):
+			case <-time.After(time.Second * 10):
 				return
 			}
 		}
