@@ -158,14 +158,21 @@ func GetInteractionUserName(interaction *discordgo.Interaction) string {
 	return ""
 }
 
-// SendEphemeralInteractionResponse TODO Deprecated
-func SendEphemeralInteractionResponse(session *discordgo.Session, interaction *discordgo.Interaction, message string, components ...discordgo.MessageComponent) error {
-	return session.InteractionRespond(interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content:    message,
-			Components: components,
-			Flags:      uint64(discordgo.MessageFlagsEphemeral),
-		},
-	})
+func GetInteractionUserVoiceStateId(session *discordgo.Session, interaction *discordgo.Interaction) string {
+	if interaction.Member == nil {
+		return ""
+	}
+
+	guild, err := session.State.Guild(interaction.GuildID)
+	if err != nil {
+		return ""
+	}
+
+	for _, voiceState := range guild.VoiceStates {
+		if interaction.Member.User.ID == voiceState.UserID {
+			return voiceState.ChannelID
+		}
+	}
+
+	return ""
 }

@@ -4,16 +4,16 @@ go 1.19
 
 require (
 	github.com/bwmarrin/discordgo v0.25.0
-	github.com/eolso/threadsafe v0.0.0-20220426062731-233f2996097c
+	github.com/eolso/threadsafe v0.0.0-20220827020629-e6e6c696ad2b
 	github.com/jonas747/dca v0.0.0-20210930103944-155f5e5f0cc7
-	github.com/olympus-go/apollo v0.0.0-20220807212505-a4f2b6a9eaaf
-	github.com/olympus-go/athena v0.0.0-20220811054341-853022d62a02
+	github.com/olympus-go/apollo v0.0.0-20220828164125-82b22347dc83
+	github.com/olympus-go/athena v0.0.0-20220815052712-f80b3d209a8e
 	github.com/rs/zerolog v1.27.0
 )
 
 require (
 	github.com/badfortrains/mdns v0.0.0-20160325001438-447166384f51 // indirect
-	github.com/eolso/librespot-golang v0.0.0-20220807205828-25a7fab5e593 // indirect
+	github.com/eolso/librespot-golang v0.0.0-20220816065617-45d017639935 // indirect
 	github.com/golang/protobuf v1.5.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/jonas747/ogg v0.0.0-20161220051205-b4f6f4cf3757 // indirect
