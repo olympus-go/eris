@@ -138,7 +138,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				gameSession.state = akiStateProcessing
 				utils.InteractionResponse(s, i.Interaction).
-					Message("<a:loading:1005279530438623272> Starting game...").
+					Message("<a:loadingdots:1011445769590554684> Starting game...").
 					Components(gameSession.themeButtons(gameSession.ownerId, false)).EditWithLog(a.logger)
 
 				themeIndex, err := strconv.Atoi(selection)
@@ -179,7 +179,7 @@ func (a *AkinatorPlugin) Handlers() map[string]any {
 
 				// Update response to show thinking and disable the buttons
 				utils.InteractionResponse(s, i.Interaction).
-					Message("<a:loading:1005279530438623272> George Tuney is thinking...").
+					Message("<a:loadingdots:1011445769590554684> George Tuney is thinking...").
 					Components(gameSession.questionButtons(false)).EditWithLog(a.logger)
 
 				answer, err := strconv.Atoi(selection)
