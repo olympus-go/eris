@@ -1,7 +1,12 @@
 package utils
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"strings"
 
+	"github.com/bwmarrin/discordgo"
+)
+
+// CompareApplicationCommand compares two discordgo.ApplicationCommand(s) and returns first == second.
 func CompareApplicationCommand(first, second discordgo.ApplicationCommand) bool {
 	if first.Name != second.Name {
 		return false
@@ -22,6 +27,8 @@ func CompareApplicationCommand(first, second discordgo.ApplicationCommand) bool 
 	return true
 }
 
+// CompareApplicationCommandOption recursively traverses two discordgo.ApplicationCommandOption(s) to test for value
+// equivalence. This can be called directly or through CompareApplicationCommand to compare higher level commands.
 func CompareApplicationCommandOption(first, second discordgo.ApplicationCommandOption) bool {
 	if first.Name != second.Name {
 		return false
@@ -30,6 +37,9 @@ func CompareApplicationCommandOption(first, second discordgo.ApplicationCommandO
 		return false
 	}
 	if first.Required != second.Required {
+		return false
+	}
+	if first.Type != second.Type {
 		return false
 	}
 	if len(first.Options) != len(second.Options) {
@@ -50,7 +60,9 @@ func CompareApplicationCommandOption(first, second discordgo.ApplicationCommandO
 	}
 
 	for index, _ := range first.Choices {
-		CompareApplicationCommandOptionChoice(*first.Choices[index], *second.Choices[index])
+		if (*first.Choices[index]).Name != (*second.Choices[index]).Name {
+			return false
+		}
 	}
 
 	if first.MinValue != nil && second.MinValue != nil {
@@ -66,35 +78,52 @@ func CompareApplicationCommandOption(first, second discordgo.ApplicationCommandO
 	return true
 }
 
-func CompareApplicationCommandOptionChoice(first, second discordgo.ApplicationCommandOptionChoice) bool {
-	return first.Name == second.Name
+// GetCommandOption takes either a discordgo.ApplicationCommandInteractionData or a
+// discordgo.ApplicationCommandInteractionDataOption, and checks that:
+//  1. the `.Name` property matches `name`
+//  2. there exists and option in `.Options` with the name optionName
+//
+// If those conditions are met then the *discordgo.ApplicationCommandInteractionDataOption that matches is returned.
+// If the conditions aren't met, then nil is returned.
+func GetCommandOption(command any, name string, optionName string) *discordgo.ApplicationCommandInteractionDataOption {
+	// TODO: when generics support shared properties, this can be fixed to avoid type assertions.
+	switch cmd := command.(type) {
+	case discordgo.ApplicationCommandInteractionData:
+		if cmd.Name != name {
+			return nil
+		}
+
+		for _, option := range cmd.Options {
+			if option.Name == optionName {
+				return option
+			}
+		}
+	case discordgo.ApplicationCommandInteractionDataOption:
+		// TODO too dumb to figure out a clean way of de-duping this
+		if cmd.Name != name {
+			return nil
+		}
+
+		for _, option := range cmd.Options {
+			if option.Name == optionName {
+				return option
+			}
+		}
+	}
+
+	return nil
 }
 
-// CheckApplicationCommandData checks a discordgo.ApplicationCommandInteractionData for the matching name and subsequent option names.
-func CheckApplicationCommandData(command discordgo.ApplicationCommandInteractionData, name string, options ...string) bool {
-	if command.Name != name || len(command.Options) != len(options) {
+// IsInteractionMessageComponent checks an interaction to see if it's of type discordgo.InteractionMessageComponent. It
+// also compares the CustomID of it to name using the compareType supplied. compareType can be any of the following:
+// "is", or "startsWith".
+func IsInteractionMessageComponent(i *discordgo.InteractionCreate, compareType string, name string) bool {
+	switch strings.ToLower(compareType) {
+	case "startswith":
+		return i.Interaction.Type == discordgo.InteractionMessageComponent && strings.HasPrefix(i.MessageComponentData().CustomID, name)
+	case "is":
+		return i.Interaction.Type == discordgo.InteractionMessageComponent && i.MessageComponentData().CustomID == name
+	default:
 		return false
 	}
-
-	for index, option := range options {
-		if command.Options[index].Name != option {
-			return false
-		}
-	}
-
-	return true
-}
-
-func GetApplicationCommandOption(command discordgo.ApplicationCommandInteractionData, name string, optionName string) (*discordgo.ApplicationCommandInteractionDataOption, bool) {
-	if command.Name != name {
-		return nil, false
-	}
-
-	for _, option := range command.Options {
-		if option.Name == optionName {
-			return option, true
-		}
-	}
-
-	return nil, false
 }

@@ -1,8 +1,9 @@
 package utils
 
 import (
+	"log/slog"
+
 	"github.com/bwmarrin/discordgo"
-	"github.com/rs/zerolog"
 )
 
 type InteractionResponseBuilder struct {
@@ -28,13 +29,25 @@ func (i *InteractionResponseBuilder) Type(t discordgo.InteractionResponseType) *
 	return i
 }
 
+// Deferred marks the response as "will respond later"
+func (i *InteractionResponseBuilder) Deferred() *InteractionResponseBuilder {
+	i.response.Type = discordgo.InteractionResponseDeferredChannelMessageWithSource
+	return i
+}
+
+// DeferredUpdate marks the response as "will update response later"
+func (i *InteractionResponseBuilder) DeferredUpdate() *InteractionResponseBuilder {
+	i.response.Type = discordgo.InteractionResponseDeferredMessageUpdate
+	return i
+}
+
 func (i *InteractionResponseBuilder) Message(message string) *InteractionResponseBuilder {
 	i.response.Data.Content = message
 	return i
 }
 
 func (i *InteractionResponseBuilder) Flags(flags discordgo.MessageFlags) *InteractionResponseBuilder {
-	i.response.Data.Flags = uint64(flags)
+	i.response.Data.Flags = flags
 	return i
 }
 
@@ -70,9 +83,12 @@ func (i *InteractionResponseBuilder) Send() error {
 	return i.session.InteractionRespond(i.interaction, i.response)
 }
 
-func (i *InteractionResponseBuilder) SendWithLog(logger zerolog.Logger) {
+func (i *InteractionResponseBuilder) SendWithLog(logger *slog.Logger) {
 	if err := i.Send(); err != nil {
-		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to respond to interaction")
+		logger.Error("failed to respond to interaction",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
 	}
 }
 
@@ -87,25 +103,52 @@ func (i *InteractionResponseBuilder) FollowUpCreate() (*discordgo.Message, error
 	return i.session.FollowupMessageCreate(i.interaction, true, webhookParams)
 }
 
+func (i *InteractionResponseBuilder) FollowUpCreateWithLog(logger *slog.Logger) {
+	if _, err := i.FollowUpCreate(); err != nil {
+		logger.Error("failed to create followup",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
+	}
+}
+
 func (i *InteractionResponseBuilder) FollowUpEdit(id string) (*discordgo.Message, error) {
 	webhookParams := &discordgo.WebhookEdit{
-		Content:    i.response.Data.Content,
-		Components: i.response.Data.Components,
-		Embeds:     i.response.Data.Embeds,
+		Content:    &i.response.Data.Content,
+		Components: &i.response.Data.Components,
+		Embeds:     &i.response.Data.Embeds,
 	}
 
 	return i.session.FollowupMessageEdit(i.interaction, id, webhookParams)
+}
+
+func (i *InteractionResponseBuilder) FollowUpEditWithLog(id string, logger *slog.Logger) {
+	if _, err := i.FollowUpEdit(id); err != nil {
+		logger.Error("failed to edit followup",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
+	}
 }
 
 func (i *InteractionResponseBuilder) FollowUpDelete(id string) error {
 	return i.session.FollowupMessageDelete(i.interaction, id)
 }
 
+func (i *InteractionResponseBuilder) FollowUpDeleteWithLog(id string, logger *slog.Logger) {
+	if err := i.FollowUpDelete(id); err != nil {
+		logger.Error("failed to delete followup",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
+	}
+}
+
 func (i *InteractionResponseBuilder) Edit() error {
 	webhookEdit := &discordgo.WebhookEdit{
-		Content:    i.response.Data.Content,
-		Embeds:     i.response.Data.Embeds,
-		Components: i.response.Data.Components,
+		Content:    &i.response.Data.Content,
+		Embeds:     &i.response.Data.Embeds,
+		Components: &i.response.Data.Components,
 	}
 
 	_, err := i.session.InteractionResponseEdit(i.interaction, webhookEdit)
@@ -113,9 +156,12 @@ func (i *InteractionResponseBuilder) Edit() error {
 	return err
 }
 
-func (i *InteractionResponseBuilder) EditWithLog(logger zerolog.Logger) {
+func (i *InteractionResponseBuilder) EditWithLog(logger *slog.Logger) {
 	if err := i.Edit(); err != nil {
-		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to edit interaction")
+		logger.Error("failed to edit interaction",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
 	}
 }
 
@@ -123,9 +169,12 @@ func (i *InteractionResponseBuilder) Delete() error {
 	return i.session.InteractionResponseDelete(i.interaction)
 }
 
-func (i *InteractionResponseBuilder) DeleteWithLog(logger zerolog.Logger) {
+func (i *InteractionResponseBuilder) DeleteWithLog(logger *slog.Logger) {
 	if err := i.Delete(); err != nil {
-		logger.Error().Err(err).Interface("interaction", i.interaction).Msg("failed to delete interaction")
+		logger.Error("failed to delete interaction",
+			slog.String("error", err.Error()),
+			slog.Any("interaction", i.interaction),
+		)
 	}
 }
 
@@ -156,6 +205,13 @@ func GetInteractionUserName(interaction *discordgo.Interaction) string {
 	}
 
 	return ""
+}
+
+func GetInteractionUser(interaction *discordgo.Interaction) map[string]string {
+	return map[string]string{
+		"id":   GetInteractionUserId(interaction),
+		"name": GetInteractionUserName(interaction),
+	}
 }
 
 func GetInteractionUserVoiceStateId(session *discordgo.Session, interaction *discordgo.Interaction) string {
